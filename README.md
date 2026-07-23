@@ -73,8 +73,8 @@ you a one-key picker to jump to it.
   every stop is an actual Claude Code pane; `←` switches to session mode
   (cursor snaps to the current session's header, up/down now move
   header-to-header, Enter jumps to that session's last active pane, and
-  the preview shows exactly that pane); `→` snaps back to the nearest
-  pane row. Pane rows are indented deeper than headers so which kind of
+  the preview becomes a stacked digest of all that session's tracked
+  panes — `bin/preview-row.sh`); `→` snaps back to the nearest pane row. Pane rows are indented deeper than headers so which kind of
   row the cursor is on is legible at a glance, and the prompt line at the
   top follows the mode (`change-header`).
 - Jumping to a `DONE` pane calls `tmux_status_update.py mark-read` on it
@@ -161,13 +161,16 @@ Press `prefix + g` (or whatever key you bound) anywhere in tmux:
 
 ```
 ▾ $1 news               🔴0  ⏳1  ✅1  🏃1  👀0
-    DONE  57s前   prototype-redesign      /Users/you/repos/frontend
-    IDLE  90s前   backend-notes           /Users/you/repos/backend
-    RUN   82s前   write-readme            /Users/you/repos/backend
+    prototype-redesign        DONE  57s前   /Users/you/repos/frontend
+    backend-notes             IDLE  90s前   /Users/you/repos/backend
+    write-readme              RUN   82s前   /Users/you/repos/backend
 ▾ $2 fun                🔴1  ⏳0  ✅0  🏃0  👀1
-    WAIT  12s前   tmux-picker             /Users/you
-    READ  331s前  claude                  /Users/you
+    tmux-picker               WAIT  12s前   /Users/you
+    claude                    READ  331s前  /Users/you
 ```
+
+The window name leads each pane row — "what is this one doing" is the
+first thing you scan for — with the status right after it.
 
 The cursor starts on the pane you're currently on (if it's tracked), not
 always on whatever's most urgent — you're usually opening this because
@@ -180,9 +183,12 @@ place; no separate menu, no extra confirmation step for either.
 
 `←` flips the same list into session-select mode: the cursor snaps onto
 the `▾ session` header lines instead (up/down move session-to-session),
-the preview shows each session's last active pane, and Enter drops you
-into the session right there. `→` flips back to pane-select. The deeper
-indent on pane rows is what tells you at a glance which mode you're in.
+and the preview becomes a digest of *every* tracked Claude pane in that
+session — each pane's status row as a title, then the tail of its screen,
+sized to fit the preview height — so one glance answers "what's everyone
+in this session up to". Enter drops you into the session (its last active
+pane). `→` flips back to pane-select. The deeper indent on pane rows is
+what tells you at a glance which mode you're in.
 
 ## Notes
 

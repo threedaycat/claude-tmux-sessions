@@ -110,15 +110,16 @@ for s in sessions_sorted:
     # Pane rows are indented deeper than headers on purpose: with the
     # left/right mode toggle either row type can hold the cursor, and the
     # horizontal offset is what makes "am I picking a session or a pane"
-    # legible at a glance.
+    # legible at a glance. Window name leads the row — "what is this one
+    # doing" is the first thing you scan for — with the status right
+    # after it.
     for _key, pane, label, age, wname, cwd in entries:
         display = (
             "    "
+            + pad(wname, 26)
             + label
             + "  "
             + pad(f"{age}s前", 8)
-            + pad(wname, 24)
-            + "  "
             + cwd
         )
         print(f"{display}\t{pane}\t{s}")
