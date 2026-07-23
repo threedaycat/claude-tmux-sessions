@@ -68,8 +68,13 @@ leaves to you, since tmux configs vary. In `~/.tmux.conf` (or
 `~/.tmux.conf.local` if you use [gpakosz/.tmux](https://github.com/gpakosz/.tmux)):
 
 ```tmux
-bind g display-popup -w 90% -h 60% -E "~/.claude/hooks/claude-tmux-picker.sh"
+bind g display-popup -w 95% -h 85% -e "CALLER_PANE=#{pane_id}" -E "~/.claude/hooks/claude-tmux-picker.sh"
 ```
+
+The `-e "CALLER_PANE=#{pane_id}"` part is what makes the picker default its
+cursor to the pane you're currently on instead of the top of the list —
+`#{pane_id}` is expanded at key-press time (before the popup's own pane
+exists), so it's the pane you were actually on.
 
 Reload with `tmux source-file ~/.tmux.conf`, then in any already-running
 Claude Code session run `/hooks` once so it picks up the new config
@@ -87,7 +92,10 @@ Press `prefix + g` (or whatever key you bound) anywhere in tmux:
   READ  331s前  tmux-picker             /Users/you
 ```
 
-Arrow up/down moves between panes only — the `▾ session` lines are skipped
+The cursor starts on the pane you're currently on (if it's tracked), not
+always on whatever's most urgent — you're usually opening this because
+you want to check something nearby, not get redirected. Arrow up/down
+moves between panes only — the `▾ session` lines are skipped
 automatically, so every stop shows a real Claude Code pane and the
 right-hand preview instantly follows it, scrolled to the bottom. Enter
 jumps immediately; no separate menu, no extra confirmation step.
