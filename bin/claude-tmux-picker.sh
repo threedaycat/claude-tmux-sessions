@@ -4,7 +4,11 @@
 # the live preview (right side), one Enter jumps. No intermediate menus.
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve through the ~/.claude/hooks symlink to this script's real location,
+# so preview-pane.sh (which lives next to it) can always be found.
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+[ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 STATUS_FILE="$HOME/.claude/tmux-claude-status.json"
 
 if [ ! -s "$STATUS_FILE" ]; then
@@ -126,7 +130,7 @@ fi
 chosen=$(printf '%s\n' "$rows" | fzf --ansi --delimiter=$'\t' --with-nth=1 \
   --header='↑↓ 浏览 session/window/pane (预览实时更新)  ·  Enter 跳转 / Esc 取消' \
   --layout=reverse --height=100% \
-  --preview "$REPO_DIR/bin/preview-pane.sh '{2}' '{3}' '{4}' '{5}'" \
+  --preview "$BIN_DIR/preview-pane.sh '{2}' '{3}' '{4}' '{5}'" \
   --preview-window='right,60%,border-left,wrap' \
   --preview-label=' 实时预览 ')
 
