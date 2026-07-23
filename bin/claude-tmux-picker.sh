@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Pick a tracked Claude Code tmux pane (running/done/blocked/input) and
-# jump to it. One fzf list: pane rows are the only selectable stops.
-# Session header rows are shown for visual grouping only — up/down/entry
-# skip over them via bin/skip-header.sh. Arrow keys move the live preview
-# (right side) instantly; Enter jumps; ctrl-x archives a pane you're done
-# caring about.
+# jump to it. One fzf list, two cursor modes (bin/skip-header.sh):
+# by default up/down stop only on pane rows (session headers are skipped);
+# left switches to session mode where up/down stop only on headers and
+# Enter jumps to that session's active pane; right switches back. The
+# right-side preview follows the cursor either way; Enter jumps; ctrl-x
+# archives a pane you're done caring about.
 set -euo pipefail
 
 # Resolve through the ~/.claude/hooks symlink to this script's real location,
@@ -38,14 +39,24 @@ fi
 # am", not always on whatever's most urgent. fzf already starts at
 # position 1 on its own, so only add a load bind when we have somewhere
 # more useful to send it — "load" with no action is invalid.
+# Cursor-mode state (pane vs session) shared with skip-header.sh's
+# transform invocations, which run as separate processes per keypress and
+# so can't keep it in a variable. Scoped to this picker instance.
+MODE_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-mode.XXXXXX")"
+export MODE_FILE
+printf 'pane' > "$MODE_FILE"
+trap 'rm -f "$MODE_FILE"' EXIT
+
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1
-  --header='↑↓ 选择 Claude 窗口 (右侧预览实时更新) · Enter 跳转 · ctrl-x 归档 · Esc 取消'
+  --header='↑↓ 选 Claude 窗口 · ← 切成选 session · Enter 跳转 · ctrl-x 归档 · Esc 取消'
   --layout=reverse --height=100%
-  --preview 'tmux capture-pane -p -e -S -200 -t {2} 2>&1 || echo "(pane 已关闭或无法读取)"'
+  --preview "$BIN_DIR/preview-row.sh {2} {3}"
   --preview-window='right,60%,border-left,wrap,follow'
   --preview-label=' Claude 实时画面 '
   --bind "down:transform:$BIN_DIR/skip-header.sh {n} down"
   --bind "up:transform:$BIN_DIR/skip-header.sh {n} up"
+  --bind "left:transform:$BIN_DIR/skip-header.sh {n} left"
+  --bind "right:transform:$BIN_DIR/skip-header.sh {n} right"
   --bind "ctrl-x:execute-silent(python3 '$STATUS_UPDATER' mark-archived {2})+reload($BIN_DIR/list-rows.sh)")
 
 LOAD_BIND="load:transform:$BIN_DIR/skip-header.sh 0 init"
@@ -62,8 +73,15 @@ chosen=$(printf '%s\n' "$rows" | fzf "${fzf_args[@]}")
 pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
 
 if [ -z "$pane_id" ]; then
-  # Landed on a header row somehow (e.g. it was the only line matching a
-  # search query) — there's nothing to jump to.
+  # Session header row (session-select mode): jump to the whole session —
+  # tmux lands you on its last active window/pane on its own.
+  session=$(printf '%s' "$chosen" | awk -F'\t' '{print $3}')
+  [ -n "$session" ] || exit 0
+  if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "=$session"
+  else
+    tmux attach -t "=$session"
+  fi
   exit 0
 fi
 

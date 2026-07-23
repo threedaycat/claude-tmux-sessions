@@ -65,11 +65,18 @@ you a one-key picker to jump to it.
   tmux's own `session_id` (creation order — the same stable order tmux
   itself uses, and the same `$N` shown in the header), not by urgency, so
   the list doesn't reshuffle every time something finishes.
-- `bin/claude-tmux-picker.sh` runs that as the `fzf` source. The session
-  header is visual grouping only: `bin/skip-header.sh`, wired up via
-  `--bind up/down/load:transform:...` and fzf's `pos()` action, makes
-  arrow keys jump straight over it, so every stop is an actual Claude Code
-  pane, never a session line.
+- `bin/claude-tmux-picker.sh` runs that as the `fzf` source, with two
+  cursor modes in the one list — no second screen, no overlay.
+  `bin/skip-header.sh`, wired up via `--bind up/down/left/right/load:
+  transform:...` and fzf's `pos()` action, decides what a stop is: in the
+  default pane mode arrow keys jump straight over the session headers, so
+  every stop is an actual Claude Code pane; `←` switches to session mode
+  (cursor snaps to the current session's header, up/down now move
+  header-to-header, Enter jumps to that session's last active pane, and
+  the preview shows exactly that pane); `→` snaps back to the nearest
+  pane row. Pane rows are indented deeper than headers so which kind of
+  row the cursor is on is legible at a glance, and the prompt line at the
+  top follows the mode (`change-header`).
 - Jumping to a `DONE` pane calls `tmux_status_update.py mark-read` on it
   first, flipping it to `READ` — the same overwrite-on-status-change
   behavior above means it naturally goes back to unread `DONE` the next
@@ -153,13 +160,13 @@ bind W run-shell '~/.claude/hooks/jump-top.sh'
 Press `prefix + g` (or whatever key you bound) anywhere in tmux:
 
 ```
-▾ $1 news                   🔴0  ⏳1  ✅1  🏃1  👀0
-  DONE  57s前   prototype-redesign      /Users/you/repos/frontend
-  IDLE  90s前   backend-notes           /Users/you/repos/backend
-  RUN   82s前   write-readme            /Users/you/repos/backend
-▾ $2 fun                    🔴1  ⏳0  ✅0  🏃0  👀1
-  WAIT  12s前   tmux-picker             /Users/you
-  READ  331s前  claude                  /Users/you
+▾ $1 news               🔴0  ⏳1  ✅1  🏃1  👀0
+    DONE  57s前   prototype-redesign      /Users/you/repos/frontend
+    IDLE  90s前   backend-notes           /Users/you/repos/backend
+    RUN   82s前   write-readme            /Users/you/repos/backend
+▾ $2 fun                🔴1  ⏳0  ✅0  🏃0  👀1
+    WAIT  12s前   tmux-picker             /Users/you
+    READ  331s前  claude                  /Users/you
 ```
 
 The cursor starts on the pane you're currently on (if it's tracked), not
@@ -170,6 +177,12 @@ automatically, so every stop shows a real Claude Code pane and the
 right-hand preview instantly follows it, scrolled to the bottom. Enter
 jumps immediately; `ctrl-x` archives (dismisses) the highlighted pane in
 place; no separate menu, no extra confirmation step for either.
+
+`←` flips the same list into session-select mode: the cursor snaps onto
+the `▾ session` header lines instead (up/down move session-to-session),
+the preview shows each session's last active pane, and Enter drops you
+into the session right there. `→` flips back to pane-select. The deeper
+indent on pane rows is what tells you at a glance which mode you're in.
 
 ## Notes
 

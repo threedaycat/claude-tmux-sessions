@@ -17,11 +17,13 @@ BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
 [ -s "$STATUS_FILE" ] || exit 0
 
-# Fields (tab-separated): display, pane_id
+# Fields (tab-separated): display, pane_id, session_name
 # `display` is fully pre-formatted/padded/colored below (CJK-width aware)
 # and is the only field fzf shows (--with-nth=1). Header rows (one per
-# session, for visual grouping only) have an empty pane_id field; pane
-# rows carry their tmux pane id. Archived panes are omitted entirely.
+# session) have an empty pane_id field; pane rows carry their tmux pane
+# id. Both carry the session name, so Enter on a header (session-select
+# mode) knows where to jump and the preview can show the session's active
+# pane. Archived panes are omitted entirely.
 python3 - "$STATUS_FILE" <<'PYEOF'
 import json, sys, subprocess, time, unicodedata
 from collections import defaultdict
@@ -103,11 +105,15 @@ for s in sessions_sorted:
     sid = session_order.get(s)
     sid_label = f"${sid} " if sid is not None else ""
     header = pad(f"▾ {sid_label}{s}", 22) + f"🔴{blocked}  ⏳{idle}  ✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
-    print(f"{header}\t")
+    print(f"{header}\t\t{s}")
 
+    # Pane rows are indented deeper than headers on purpose: with the
+    # left/right mode toggle either row type can hold the cursor, and the
+    # horizontal offset is what makes "am I picking a session or a pane"
+    # legible at a glance.
     for _key, pane, label, age, wname, cwd in entries:
         display = (
-            "  "
+            "    "
             + label
             + "  "
             + pad(f"{age}s前", 8)
@@ -115,5 +121,5 @@ for s in sessions_sorted:
             + "  "
             + cwd
         )
-        print(f"{display}\t{pane}")
+        print(f"{display}\t{pane}\t{s}")
 PYEOF
