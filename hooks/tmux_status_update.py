@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
-"""Record Claude Code session status (running/done) keyed by tmux pane, so
-claude-tmux-picker.sh can list which sessions just finished and jump to them."""
+"""Record Claude Code session status (running/done/read) keyed by tmux pane,
+so claude-tmux-picker.sh can list which sessions just finished and jump to
+them.
+
+Modes:
+  running / done   called by hooks (UserPromptSubmit / Stop) for the pane
+                    they're running in ($TMUX_PANE); overwrites the entry,
+                    which naturally clears any stale "read" flag.
+  mark-read <pane>  called by claude-tmux-picker.sh right after it jumps to
+                    <pane>, so a "done" pane the user has actually visited
+                    once shows as already-seen instead of unread.
+"""
 import sys
 import os
 import json
@@ -26,11 +36,27 @@ def tmux_display(pane):
     return parts
 
 
-def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("running", "done"):
-        return
-    status = sys.argv[1]
+def with_status_file(fn):
+    """Open STATUS_FILE read-write under an exclusive lock and hand the
+    parsed dict to fn, which mutates it in place; write the result back."""
+    os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
+    fd = os.open(STATUS_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "r+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            raw = f.read()
+            data = json.loads(raw) if raw.strip() else {}
+        except Exception:
+            data = {}
+        fn(data)
+        f.seek(0)
+        f.truncate()
+        json.dump(data, f, indent=2)
+        fcntl.flock(f, fcntl.LOCK_UN)
 
+
+def record_status(status):
     pane = os.environ.get("TMUX_PANE")
     if not pane:
         return  # not running inside tmux, nothing to track
@@ -58,21 +84,26 @@ def main():
         "session_id": stdin_data.get("session_id"),
     }
 
-    os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
-    fd = os.open(STATUS_FILE, os.O_RDWR | os.O_CREAT, 0o600)
-    with os.fdopen(fd, "r+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            f.seek(0)
-            raw = f.read()
-            data = json.loads(raw) if raw.strip() else {}
-        except Exception:
-            data = {}
-        data[pane] = entry
-        f.seek(0)
-        f.truncate()
-        json.dump(data, f, indent=2)
-        fcntl.flock(f, fcntl.LOCK_UN)
+    with_status_file(lambda data: data.__setitem__(pane, entry))
+
+
+def mark_read(pane):
+    def apply(data):
+        if pane in data:
+            data[pane]["read"] = True
+
+    with_status_file(apply)
+
+
+def main():
+    if len(sys.argv) < 2:
+        return
+    mode = sys.argv[1]
+
+    if mode in ("running", "done"):
+        record_status(mode)
+    elif mode == "mark-read" and len(sys.argv) == 3:
+        mark_read(sys.argv[2])
 
 
 if __name__ == "__main__":

@@ -66,8 +66,10 @@ for pane, e in data.items():
     _, session, _win_idx, window_name, _pane_idx, cwd = live[pane]
     age = int(now - e.get("updated_at", now))
     status = e.get("status", "running")
-    if status == "done":
-        label, rank = "\033[32mDONE\033[0m", 0
+    if status == "done" and e.get("read"):
+        label, rank = "\033[34mREAD\033[0m", 2   # done, already visited once
+    elif status == "done":
+        label, rank = "\033[1;32mDONE\033[0m", 0  # done, not seen yet
     else:
         label, rank = "\033[33mRUN \033[0m", 1
     key = (rank, -e.get("updated_at", 0))
@@ -77,9 +79,10 @@ sessions_sorted = sorted(by_session.keys(), key=lambda s: min(k for k, *_ in by_
 
 for s in sessions_sorted:
     entries = sorted(by_session[s], key=lambda x: x[0])
-    d = sum(1 for key, *_ in entries if key[0] == 0)
-    r = len(entries) - d
-    header = pad(f"▾ {s}", 18) + f"✅{d}  \U0001f3c3{r}"
+    d_unread = sum(1 for key, *_ in entries if key[0] == 0)
+    d_read = sum(1 for key, *_ in entries if key[0] == 2)
+    r = sum(1 for key, *_ in entries if key[0] == 1)
+    header = pad(f"▾ {s}", 18) + f"✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
     print(f"{header}\t")
 
     for _key, pane, label, age, wname, cwd in entries:
@@ -133,6 +136,11 @@ if [ -z "$session" ]; then
   sleep 1.5
   exit 0
 fi
+
+# Visiting a DONE pane means "I've seen this" — mark it read so it stops
+# showing up as unread next time (RUN panes are unaffected: the status
+# field still says "running" so the read flag has no visible effect).
+python3 "$BIN_DIR/../hooks/tmux_status_update.py" mark-read "$pane_id" 2>/dev/null || true
 
 if [ -n "${TMUX:-}" ]; then
   tmux switch-client -t "$session"
