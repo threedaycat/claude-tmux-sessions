@@ -35,10 +35,10 @@ live = set(out.split())
 def rank_of(status, read):
     if status == "blocked":
         return -1
+    if status in ("done", "input") and read:
+        return 3
     if status == "input":
         return 0
-    if status == "done" and read:
-        return 3
     if status == "done":
         return 1
     return 2
@@ -62,14 +62,15 @@ if [ -z "$pane_id" ]; then
   exit 0
 fi
 
-session=$(tmux display-message -p -t "$pane_id" '#{session_name}' 2>/dev/null || true)
-if [ -z "$session" ]; then
+if ! tmux display-message -p -t "$pane_id" '' >/dev/null 2>&1; then
   tmux display-message "pane 已经不存在了 ($pane_id)"
   exit 0
 fi
 
 python3 "$BIN_DIR/../hooks/tmux_status_update.py" mark-read "$pane_id" 2>/dev/null || true
 
-tmux switch-client -t "$session"
+# Target the pane id directly (tmux resolves it to its session) — session
+# names may contain ':'/'.' which break name-based targets.
+tmux switch-client -t "$pane_id"
 tmux select-window -t "$pane_id"
 tmux select-pane -t "$pane_id"

@@ -60,7 +60,7 @@ you a one-key picker to jump to it.
   panes: `WAIT` (bold red, top priority — Claude needs a decision), `IDLE`
   (magenta — Claude's waiting on you but not blocked), `DONE` (bold green,
   finished and unseen), `RUN` (yellow, still working), or `READ` (blue,
-  finished and you've already jumped to it once) — age, window, cwd,
+  done *or* idle and you've already jumped to it once) — age, window, cwd,
   CJK-width-aware padded so columns line up. Sessions are ordered by
   tmux's own `session_id` (creation order — the same stable order tmux
   itself uses, and the same `$N` shown in the header), not by urgency, so
@@ -82,8 +82,10 @@ you a one-key picker to jump to it.
   deeper-indented with a dimmed cwd, so which kind of row the cursor is
   on is legible at a glance, and the prompt line at the top follows the
   mode (`change-header`).
-- Jumping to a `DONE` pane calls `tmux_status_update.py mark-read` on it
-  first, flipping it to `READ` — the same overwrite-on-status-change
+- Jumping to a `DONE` or `IDLE` pane calls `tmux_status_update.py
+  mark-read` on it first, flipping it to `READ` (an idle Claude you've
+  already looked at — e.g. right after a `/clear` — has nothing new to
+  say, so it shouldn't keep flagging you) — the same overwrite-on-status-change
   behavior above means it naturally goes back to unread `DONE` the next
   time that pane actually finishes something new.
 - `ctrl-x` archives the highlighted pane (`mark-archived`) and reloads the

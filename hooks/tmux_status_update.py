@@ -124,9 +124,11 @@ def notify_blocked(session_name, pane, window_name, message):
 
     if shutil.which("terminal-notifier"):
         app = frontmost_app() or "iTerm2"
+        # Target the pane id throughout (tmux resolves it to its session)
+        # — session names may contain ':'/'.' which break name targets.
         jump = (
             f'osascript -e {shlex.quote("tell application " + json.dumps(app) + " to activate")}; '
-            f"tmux switch-client -t {shlex.quote(session_name)}; "
+            f"tmux switch-client -t {shlex.quote(pane)}; "
             f"tmux select-window -t {shlex.quote(pane)}; "
             f"tmux select-pane -t {shlex.quote(pane)}"
         )

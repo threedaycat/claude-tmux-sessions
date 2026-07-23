@@ -34,7 +34,7 @@ for pane, e in data.items():
     status = e.get("status", "running")
     if status == "blocked":
         blocked += 1
-    elif status == "input":
+    elif status == "input" and not e.get("read"):
         idle += 1
     elif status == "done" and not e.get("read"):
         done_unread += 1

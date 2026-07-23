@@ -123,10 +123,10 @@ def label_of(entry):
     status = entry.get("status", "running")
     if status == "blocked":
         return "\033[1;31mWAIT\033[0m", -1
+    if status in ("done", "input") and entry.get("read"):
+        return "\033[34mREAD\033[0m", 3
     if status == "input":
         return "\033[35mIDLE\033[0m", 0
-    if status == "done" and entry.get("read"):
-        return "\033[34mREAD\033[0m", 3
     if status == "done":
         return "\033[1;32mDONE\033[0m", 1
     return "\033[33mRUN \033[0m", 2
