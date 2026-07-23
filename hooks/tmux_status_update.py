@@ -48,6 +48,18 @@ import subprocess
 
 STATUS_FILE = os.path.expanduser("~/.claude/tmux-claude-status.json")
 
+# Maps stable pane coordinates ("session:window.pane" + cwd) to the Claude
+# session_id last seen running there. Unlike STATUS_FILE (keyed by volatile
+# %pane ids, pruned aggressively) this survives a tmux server crash, so
+# restore-claude.sh can `claude --resume` each pane after tmux-resurrect
+# rebuilds the layout. Entries are removed on graceful Claude exit
+# (SessionEnd -> clear) — if you quit on purpose, a restore shouldn't
+# bring it back; if tmux died under you, SessionEnd never fired and the
+# entry is still here. Which is exactly the semantics you want.
+RESTORE_FILE = os.path.expanduser("~/.claude/tmux-claude-restore.json")
+
+RESTORE_TTL = 14 * 24 * 3600  # drop mappings not refreshed in two weeks
+
 
 def tmux_display(pane):
     fmt = "#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_current_path}"
@@ -64,11 +76,11 @@ def tmux_display(pane):
     return parts
 
 
-def with_status_file(fn):
-    """Open STATUS_FILE read-write under an exclusive lock and hand the
+def with_status_file(fn, path=STATUS_FILE):
+    """Open path read-write under an exclusive lock and hand the
     parsed dict to fn, which mutates it in place; write the result back."""
-    os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
-    fd = os.open(STATUS_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     with os.fdopen(fd, "r+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
@@ -85,12 +97,19 @@ def with_status_file(fn):
 
 
 def frontmost_app():
+    """Uses lsappinfo (plain Launch Services query) instead of an
+    AppleScript 'tell application "System Events"' — the latter sends an
+    Apple Event and triggers macOS's Automation permission prompt every
+    time it isn't durably granted; lsappinfo needs no such permission."""
     try:
-        return subprocess.check_output(
-            ["osascript", "-e",
-             'tell application "System Events" to name of first process whose frontmost is true'],
+        front_id = subprocess.check_output(
+            ["lsappinfo", "front"], stderr=subprocess.DEVNULL, text=True,
+        ).strip()
+        info = subprocess.check_output(
+            ["lsappinfo", "info", "-only", "name", front_id],
             stderr=subprocess.DEVNULL, text=True,
         ).strip()
+        return info.split("=", 1)[1].strip('"') if "=" in info else None
     except Exception:
         return None
 
@@ -156,6 +175,24 @@ def record_status(status, stdin_data):
 
     with_status_file(lambda data: data.__setitem__(pane, entry))
 
+    sid = stdin_data.get("session_id")
+    if sid:
+        key = f"{session_name}:{window_index}.{pane_index}"
+
+        def update_restore(data):
+            now = time.time()
+            for k in [k for k, v in data.items()
+                      if now - v.get("updated_at", 0) > RESTORE_TTL]:
+                del data[k]
+            data[key] = {
+                "session_id": sid,
+                "cwd": cwd,
+                "window_name": window_name,
+                "updated_at": now,
+            }
+
+        with_status_file(update_restore, path=RESTORE_FILE)
+
     if status == "blocked":
         notify_blocked(session_name, pane, window_name, stdin_data.get("message"))
 
@@ -197,6 +234,16 @@ def clear_pane():
         return
 
     with_status_file(lambda data: data.pop(pane, None))
+
+    # Graceful exit — also forget the restore mapping, so a later
+    # tmux-resurrect restore doesn't resurrect a Claude you closed on
+    # purpose. (After a tmux crash this never runs, and the mapping
+    # survives for restore-claude.sh — by design.)
+    info = tmux_display(pane)
+    if info is not None:
+        session_name, window_index, _wname, pane_index, _cwd = info
+        key = f"{session_name}:{window_index}.{pane_index}"
+        with_status_file(lambda data: data.pop(key, None), path=RESTORE_FILE)
 
 
 # What a pane's foreground command looks like once Claude Code has exited

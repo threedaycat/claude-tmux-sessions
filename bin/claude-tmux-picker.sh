@@ -66,7 +66,10 @@ if [ -n "${CALLER_PANE:-}" ]; then
 fi
 fzf_args+=(--bind "$LOAD_BIND")
 
-chosen=$(printf '%s\n' "$rows" | fzf "${fzf_args[@]}")
+# `|| true`: fzf exits 130 on Esc/ctrl-c, which would otherwise ride
+# set -e out of this script and make tmux print
+# "'tmux display-popup …' returned 130" — cancelling isn't an error.
+chosen=$(printf '%s\n' "$rows" | fzf "${fzf_args[@]}" || true)
 
 [ -n "$chosen" ] || exit 0
 

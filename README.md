@@ -211,6 +211,29 @@ last active pane). `→` flips back to pane-select. Bold-cyan headers vs
 plain, deeper-indented pane rows is what tells you at a glance which
 mode you're in.
 
+## Surviving a tmux crash (tmux-resurrect integration)
+
+[tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) brings
+back your layout — sessions, windows, panes, cwds — but every Claude Code
+session inside them comes back as an empty shell. This tool can fix that:
+the hooks also maintain `~/.claude/tmux-claude-restore.json`, mapping
+stable pane coordinates (`session:window.pane` + cwd) to the Claude
+`session_id` last seen running there. Stable coordinates matter because a
+tmux server restart reassigns every `%pane` id.
+
+```tmux
+set -g @resurrect-hook-post-restore-all '~/.claude/hooks/restore-claude.sh'
+```
+
+After a restore, `restore-claude.sh` types `claude --resume <session_id>`
+into every restored pane that is sitting at a plain shell in the recorded
+cwd. The mapping entry is deleted when you quit Claude normally (the
+`SessionEnd` hook), so a deliberate exit stays exited — but a tmux crash
+never fires `SessionEnd`, leaving exactly the sessions that died with the
+server to be resumed. Panes already running something are never touched,
+so the script is safe to re-run; `restore-claude.sh --dry-run` shows what
+it would do.
+
 ## Notes
 
 - If your tmux config sets `automatic-rename-format '#{pane_title}'` (as
