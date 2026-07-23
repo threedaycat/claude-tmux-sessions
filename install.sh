@@ -25,6 +25,7 @@ ln -sf "$REPO_DIR/hooks/tmux_status_update.py" "$CLAUDE_HOOKS_DIR/tmux_status_up
 ln -sf "$REPO_DIR/bin/claude-tmux-picker.sh" "$CLAUDE_HOOKS_DIR/claude-tmux-picker.sh"
 ln -sf "$REPO_DIR/bin/jump-top.sh" "$CLAUDE_HOOKS_DIR/jump-top.sh"
 ln -sf "$REPO_DIR/bin/status-badge.sh" "$CLAUDE_HOOKS_DIR/status-badge.sh"
+ln -sf "$REPO_DIR/bin/restore-claude.sh" "$CLAUDE_HOOKS_DIR/restore-claude.sh"
 
 echo "==> updating $SETTINGS_FILE"
 python3 - "$SETTINGS_FILE" <<'PYEOF'
@@ -92,4 +93,9 @@ cat <<'EOF'
 可选：在 tmux 状态栏里常驻显示未处理数量（把这段拼进你的 status-right）：
 
     #(~/.claude/hooks/status-badge.sh)
+
+可选：如果你用 tmux-resurrect/continuum，加上这行，恢复布局后自动
+claude --resume 回到每个 pane 原来的会话（正常退出的不会被复活）：
+
+    set -g @resurrect-hook-post-restore-all '~/.claude/hooks/restore-claude.sh'
 EOF

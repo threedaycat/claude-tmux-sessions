@@ -122,9 +122,9 @@ for s in sessions_sorted:
     for _key, pane, label, age, wname, cwd in entries:
         display = (
             "      "
-            + pad(wname, 26)
             + label
             + "  "
+            + pad(wname, 24)
             + pad(f"{age}s前", 8)
             + "\033[2m" + cwd + "\033[0m"
         )
