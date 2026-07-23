@@ -63,16 +63,15 @@ by_session = defaultdict(list)
 for pane, e in data.items():
     if pane not in live:
         continue
-    _, session, window_index, window_name, pane_index, cwd = live[pane]
+    _, session, _win_idx, window_name, _pane_idx, cwd = live[pane]
     age = int(now - e.get("updated_at", now))
     status = e.get("status", "running")
     if status == "done":
         label, rank = "\033[32mDONE\033[0m", 0
     else:
         label, rank = "\033[33mRUN \033[0m", 1
-    winpane = f"{window_index}.{pane_index}"
     key = (rank, -e.get("updated_at", 0))
-    by_session[session].append((key, pane, label, age, winpane, window_name, cwd))
+    by_session[session].append((key, pane, label, age, window_name, cwd))
 
 sessions_sorted = sorted(by_session.keys(), key=lambda s: min(k for k, *_ in by_session[s]))
 
@@ -83,13 +82,12 @@ for s in sessions_sorted:
     header = pad(f"▾ {s}", 18) + f"✅{d}  \U0001f3c3{r}"
     print(f"{header}\t")
 
-    for _key, pane, label, age, winpane, wname, cwd in entries:
+    for _key, pane, label, age, wname, cwd in entries:
         display = (
             "  "
             + label
             + "  "
             + pad(f"{age}s前", 8)
-            + pad(winpane, 7)
             + pad(wname, 24)
             + "  "
             + cwd
