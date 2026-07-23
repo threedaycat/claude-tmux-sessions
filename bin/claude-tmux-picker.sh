@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Pick a tracked Claude Code tmux pane (running/done) and jump to it.
-# Two-level UI: first pick a tmux session, then pick a window/pane within it.
+# Single fzf screen showing a session > window > pane tree; arrow keys move
+# the live preview (right side), one Enter jumps. No intermediate menus.
 set -euo pipefail
 
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATUS_FILE="$HOME/.claude/tmux-claude-status.json"
 
 if [ ! -s "$STATUS_FILE" ]; then
@@ -11,10 +13,13 @@ if [ ! -s "$STATUS_FILE" ]; then
   exit 0
 fi
 
-# Fields (tab-separated): session, status, label(ansi), age, winpane, window_name, cwd, pane_id
-# Already sorted globally: done-first, then most-recently-updated first.
-all_rows=$(python3 - "$STATUS_FILE" <<'PYEOF'
-import json, sys, subprocess, time
+# Fields (tab-separated): display, kind(S/W/P), session, window_index, pane_id
+# `display` is fully pre-formatted/padded/colored/indented by the script
+# below (CJK-width aware) and is the only field fzf shows (--with-nth=1).
+# The rest are hidden metadata used for the preview and the final jump.
+rows=$(python3 - "$STATUS_FILE" <<'PYEOF'
+import json, sys, subprocess, time, unicodedata
+from collections import defaultdict
 
 status_file = sys.argv[1]
 with open(status_file) as f:
@@ -32,77 +37,122 @@ for line in out.splitlines():
     if len(parts) == 6:
         live[parts[0]] = parts
 
+
+def vwidth(s):
+    w = 0
+    for ch in s:
+        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return w
+
+
+def pad(s, width):
+    w = vwidth(s)
+    return s if w >= width else s + " " * (width - w)
+
+
 now = time.time()
-rows = []
+# tree[session][window_index] = [ {pane_index, window_name, cwd, status, updated_at, pane_id}, ... ]
+tree = defaultdict(lambda: defaultdict(list))
 for pane, e in data.items():
     if pane not in live:
         continue
     _, session, window_index, window_name, pane_index, cwd = live[pane]
-    age = int(now - e.get("updated_at", now))
-    status = e.get("status", "running")
-    if status == "done":
-        label, rank = "\033[32mDONE\033[0m", 0
-    else:
-        label, rank = "\033[33mRUN \033[0m", 1
-    winpane = f"{window_index}.{pane_index}"
-    rows.append((rank, -e.get("updated_at", 0),
-                 f"{session}\t{status}\t{label}\t{age}s前\t{winpane}\t{window_name}\t{cwd}\t{pane}"))
+    tree[session][window_index].append({
+        "pane_index": pane_index,
+        "window_name": window_name,
+        "cwd": cwd,
+        "status": e.get("status", "running"),
+        "updated_at": e.get("updated_at", now),
+        "pane_id": pane,
+    })
 
-rows.sort(key=lambda r: (r[0], r[1]))
-for _, _, line in rows:
+
+def rank_of(status):
+    return 0 if status == "done" else 1
+
+
+def best_key(panes):
+    return min((rank_of(p["status"]), -p["updated_at"]) for p in panes)
+
+
+def session_best_key(session):
+    return best_key([p for panes in tree[session].values() for p in panes])
+
+
+rows = []
+for session in sorted(tree.keys(), key=session_best_key):
+    all_panes = [p for panes in tree[session].values() for p in panes]
+    d = sum(1 for p in all_panes if p["status"] == "done")
+    r = len(all_panes) - d
+    header = pad(f"▾ {session}", 28) + f"✅{d}  \U0001f3c3{r}"
+    rows.append(f"{header}\tS\t{session}\t\t")
+
+    windows = tree[session]
+    for window_index in sorted(windows.keys(), key=lambda w: best_key(windows[w])):
+        panes = windows[window_index]
+        wname = panes[0]["window_name"]
+        wd = sum(1 for p in panes if p["status"] == "done")
+        wr = len(panes) - wd
+        wheader = pad(f"  ▸ {window_index}:{wname}", 28) + f"✅{wd}  \U0001f3c3{wr}"
+        rows.append(f"{wheader}\tW\t{session}\t{window_index}\t")
+
+        for p in sorted(panes, key=lambda p: (rank_of(p["status"]), -p["updated_at"])):
+            age = int(now - p["updated_at"])
+            if p["status"] == "done":
+                label = "\033[32mDONE\033[0m"
+            else:
+                label = "\033[33mRUN \033[0m"
+            line = (
+                "    "
+                + pad(f"{window_index}.{p['pane_index']}", 7)
+                + label
+                + "  "
+                + pad(f"{age}s前", 8)
+                + p["cwd"]
+            )
+            rows.append(f"{line}\tP\t{session}\t{window_index}\t{p['pane_id']}")
+
+for line in rows:
     print(line)
 PYEOF
 )
 
-if [ -z "$all_rows" ]; then
+if [ -z "$rows" ]; then
   echo "没有找到仍然存活的 Claude Code tmux pane。"
   sleep 1.5
   exit 0
 fi
 
-# Sessions in priority order = order of first appearance in the globally-sorted
-# row list (a session's earliest row is its most urgent/recent pane).
-session_order=$(printf '%s\n' "$all_rows" | awk -F'\t' '!seen[$1]++ {print $1}')
+chosen=$(printf '%s\n' "$rows" | fzf --ansi --delimiter=$'\t' --with-nth=1 \
+  --header='↑↓ 浏览 session/window/pane (预览实时更新)  ·  Enter 跳转 / Esc 取消' \
+  --layout=reverse --height=100% \
+  --preview "$REPO_DIR/bin/preview-pane.sh '{2}' '{3}' '{4}' '{5}'" \
+  --preview-window='right,60%,border-left,wrap' \
+  --preview-label=' 实时预览 ')
 
-session_menu=""
-while IFS= read -r s; do
-  counts=$(printf '%s\n' "$all_rows" | awk -F'\t' -v s="$s" '
-    $1==s && $2=="done" {d++}
-    $1==s && $2=="running" {r++}
-    END {printf "%d\t%d", d+0, r+0}')
-  done_n=$(printf '%s' "$counts" | cut -f1)
-  run_n=$(printf '%s' "$counts" | cut -f2)
-  session_menu+="${s}\t✅ ${done_n}  🏃 ${run_n}\n"
-done <<< "$session_order"
+[ -n "$chosen" ] || exit 0
 
-while true; do
-  chosen_session_line=$(printf '%b' "$session_menu" | fzf --delimiter=$'\t' --with-nth=1,2 \
-    --header='选择 tmux session  (Enter 进入 / Esc 取消)' --layout=reverse --height=100%)
-  [ -n "$chosen_session_line" ] || exit 0
-  chosen_session=$(printf '%s' "$chosen_session_line" | awk -F'\t' '{print $1}')
+kind=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
+session=$(printf '%s' "$chosen" | awk -F'\t' '{print $3}')
+window_index=$(printf '%s' "$chosen" | awk -F'\t' '{print $4}')
+pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $5}')
 
-  pane_rows=$(printf '%s\n' "$all_rows" | awk -F'\t' -v s="$chosen_session" '$1==s')
+target_pane=""
+case "$kind" in
+  P) target_pane="$pane_id" ;;
+  W) target_pane=$(tmux list-panes -t "${session}:${window_index}" -F '#{pane_id}' 2>/dev/null | head -1) ;;
+esac
 
-  while true; do
-    chosen=$(printf '%s\n' "$pane_rows" | fzf --ansi --delimiter=$'\t' --with-nth=3,4,5,6,7 \
-      --header="[$chosen_session] Enter 跳转 / Esc 返回上一级" --layout=reverse --height=100% \
-      --preview 'tmux capture-pane -p -e -S -200 -t "{-1}"' \
-      --preview-window='right,60%,border-left,wrap' \
-      --preview-label=' 实时预览 ')
-
-    if [ -z "$chosen" ]; then
-      break  # Esc: 回到 session 菜单
-    fi
-
-    pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $NF}')
-
-    if [ -n "${TMUX:-}" ]; then
-      tmux switch-client -t "$chosen_session"
-      tmux select-window -t "$pane_id"
-      tmux select-pane -t "$pane_id"
-    else
-      tmux attach -t "$chosen_session" \; select-window -t "$pane_id" \; select-pane -t "$pane_id"
-    fi
-    exit 0
-  done
-done
+if [ -n "${TMUX:-}" ]; then
+  tmux switch-client -t "$session"
+  if [ -n "$target_pane" ]; then
+    tmux select-window -t "$target_pane"
+    tmux select-pane -t "$target_pane"
+  fi
+else
+  if [ -n "$target_pane" ]; then
+    tmux attach -t "$session" \; select-window -t "$target_pane" \; select-pane -t "$target_pane"
+  else
+    tmux attach -t "$session"
+  fi
+fi
