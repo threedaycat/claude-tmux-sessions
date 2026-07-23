@@ -25,9 +25,11 @@ you a one-key picker to jump to it.
 - `bin/claude-tmux-picker.sh` reads that file, cross-checks against
   `tmux list-panes -a` (so closed panes disappear automatically), and shows
   a two-level `fzf` picker: pick a **session** (with done/running counts),
-  then pick a **window/pane** inside it. Enter jumps there
-  (`switch-client` + `select-window` + `select-pane`); Esc at the pane
-  level goes back to the session list.
+  then pick a **window/pane** inside it — with a live preview pane on the
+  right showing that pane's actual terminal content (`tmux capture-pane`),
+  updating as you move the selection. Enter jumps there (`switch-client` +
+  `select-window` + `select-pane`); Esc at the pane level goes back to the
+  session list.
 
 ## Requirements
 
@@ -65,7 +67,7 @@ Press `prefix + g` (or whatever key you bound) anywhere in tmux:
 
 1. Pick a tmux session — shown with `✅ N done  🏃 N running` counts.
 2. Pick a window/pane inside that session — `DONE`/`RUN` label, how long
-   ago, window name, cwd.
+   ago, window name, cwd — with a live content preview on the right.
 3. Enter jumps you there.
 
 ## Notes

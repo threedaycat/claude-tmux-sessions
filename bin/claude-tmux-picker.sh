@@ -85,7 +85,10 @@ while true; do
 
   while true; do
     chosen=$(printf '%s\n' "$pane_rows" | fzf --ansi --delimiter=$'\t' --with-nth=3,4,5,6,7 \
-      --header="[$chosen_session] Enter 跳转 / Esc 返回上一级" --layout=reverse --height=100%)
+      --header="[$chosen_session] Enter 跳转 / Esc 返回上一级" --layout=reverse --height=100% \
+      --preview 'tmux capture-pane -p -e -S -200 -t "{-1}"' \
+      --preview-window='right,60%,border-left,wrap' \
+      --preview-label=' 实时预览 ')
 
     if [ -z "$chosen" ]; then
       break  # Esc: 回到 session 菜单
