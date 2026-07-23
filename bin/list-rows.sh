@@ -1,26 +1,23 @@
 #!/usr/bin/env bash
-# List the tracked, non-archived panes belonging to ONE tmux session — the
-# "drilled in" view after Tab on a session row in claude-tmux-picker.sh.
-# Also used standalone by session-preview.sh to render the summary shown
-# in the right-hand preview while still browsing at the session level.
+# Generate the picker's row list (session headers + pane rows) to stdout.
+# Standalone so it can be used both as fzf's initial input and re-invoked
+# via fzf's reload() action (e.g. after archiving a pane) to refresh the
+# list in place.
 set -euo pipefail
-
-SESSION="${1:-}"
-if [ -z "$SESSION" ]; then
-  echo "usage: list-rows.sh <session-name>" >&2
-  exit 1
-fi
 
 STATUS_FILE="$HOME/.claude/tmux-claude-status.json"
 [ -s "$STATUS_FILE" ] || exit 0
 
-# Fields (tab-separated): display, pane_id, kind("P")
+# Fields (tab-separated): display, pane_id
 # `display` is fully pre-formatted/padded/colored below (CJK-width aware)
-# and is the only field fzf shows (--with-nth=1).
-python3 - "$STATUS_FILE" "$SESSION" <<'PYEOF'
+# and is the only field fzf shows (--with-nth=1). Header rows (one per
+# session, for visual grouping only) have an empty pane_id field; pane
+# rows carry their tmux pane id. Archived panes are omitted entirely.
+python3 - "$STATUS_FILE" <<'PYEOF'
 import json, sys, subprocess, time, unicodedata
+from collections import defaultdict
 
-status_file, session_filter = sys.argv[1], sys.argv[2]
+status_file = sys.argv[1]
 with open(status_file) as f:
     data = json.load(f)
 
@@ -36,6 +33,21 @@ for line in out.splitlines():
     if len(parts) == 6:
         live[parts[0]] = parts
 
+# Session display order follows tmux's own session_id (creation order —
+# the same stable order tmux itself lists sessions in), not "most urgent
+# session first". Nobody wants the sidebar reshuffling every time a pane
+# finishes.
+session_order = {}
+try:
+    out = subprocess.check_output(
+        ["tmux", "list-sessions", "-F", "#{session_name}\t#{session_id}"], text=True
+    )
+    for line in out.splitlines():
+        name, sid = line.split("\t")
+        session_order[name] = int(sid.lstrip("$"))
+except Exception:
+    pass
+
 
 def vwidth(s):
     w = 0
@@ -50,13 +62,11 @@ def pad(s, width):
 
 
 now = time.time()
-rows = []
+by_session = defaultdict(list)
 for pane, e in data.items():
     if pane not in live or e.get("archived"):
         continue
     _, session, _win_idx, window_name, _pane_idx, cwd = live[pane]
-    if session != session_filter:
-        continue
     age = int(now - e.get("updated_at", now))
     status = e.get("status", "running")
     if status == "blocked":
@@ -70,16 +80,31 @@ for pane, e in data.items():
     else:
         label, rank = "\033[33mRUN \033[0m", 2
     key = (rank, -e.get("updated_at", 0))
-    display = (
-        label
-        + "  "
-        + pad(f"{age}s前", 8)
-        + pad(window_name, 24)
-        + "  "
-        + cwd
-    )
-    rows.append((key, f"{display}\t{pane}\tP"))
+    by_session[session].append((key, pane, label, age, window_name, cwd))
 
-for _key, line in sorted(rows, key=lambda x: x[0]):
-    print(line)
+sessions_sorted = sorted(by_session.keys(), key=lambda s: session_order.get(s, 1 << 30))
+
+for s in sessions_sorted:
+    entries = sorted(by_session[s], key=lambda x: x[0])
+    blocked = sum(1 for key, *_ in entries if key[0] == -1)
+    idle = sum(1 for key, *_ in entries if key[0] == 0)
+    d_unread = sum(1 for key, *_ in entries if key[0] == 1)
+    r = sum(1 for key, *_ in entries if key[0] == 2)
+    d_read = sum(1 for key, *_ in entries if key[0] == 3)
+    sid = session_order.get(s)
+    sid_label = f"${sid} " if sid is not None else ""
+    header = pad(f"▾ {sid_label}{s}", 22) + f"🔴{blocked}  ⏳{idle}  ✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
+    print(f"{header}\t")
+
+    for _key, pane, label, age, wname, cwd in entries:
+        display = (
+            "  "
+            + label
+            + "  "
+            + pad(f"{age}s前", 8)
+            + pad(wname, 24)
+            + "  "
+            + cwd
+        )
+        print(f"{display}\t{pane}")
 PYEOF
