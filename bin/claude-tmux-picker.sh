@@ -109,13 +109,24 @@ TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
 HEADER_POS=$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "") print NR }' | paste -sd, -)
 export HEADER_POS=",${HEADER_POS}," TOTAL
 
+# Default initial cursor: first pane row, skipping the leading header.
+# If this popup was opened via the tmux binding that passes CALLER_PANE
+# (the pane you were actually on when you pressed the key), and that pane
+# is itself tracked, start there instead — you want to land on "where I
+# am", not always on whatever's most urgent.
+LOAD_BIND="load:transform:$BIN_DIR/skip-header.sh 0 init"
+if [ -n "${CALLER_PANE:-}" ]; then
+  CALLER_POS=$(printf '%s\n' "$rows" | awk -F'\t' -v p="$CALLER_PANE" '$2==p { print NR; exit }')
+  [ -n "$CALLER_POS" ] && LOAD_BIND="load:pos($CALLER_POS)"
+fi
+
 chosen=$(printf '%s\n' "$rows" | fzf --ansi --delimiter=$'\t' --with-nth=1 \
   --header='↑↓ 选择 Claude 窗口 (右侧预览实时更新)  ·  Enter 跳转 / Esc 取消' \
   --layout=reverse --height=100% \
   --preview 'tmux capture-pane -p -e -S -200 -t {2} 2>&1 || echo "(pane 已关闭或无法读取)"' \
   --preview-window='right,60%,border-left,wrap,follow' \
   --preview-label=' Claude 实时画面 ' \
-  --bind "load:transform:$BIN_DIR/skip-header.sh 0 init" \
+  --bind "$LOAD_BIND" \
   --bind "down:transform:$BIN_DIR/skip-header.sh {n} down" \
   --bind "up:transform:$BIN_DIR/skip-header.sh {n} up")
 
