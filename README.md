@@ -73,10 +73,15 @@ you a one-key picker to jump to it.
   every stop is an actual Claude Code pane; `←` switches to session mode
   (cursor snaps to the current session's header, up/down now move
   header-to-header, Enter jumps to that session's last active pane, and
-  the preview becomes a stacked digest of all that session's tracked
-  panes — `bin/preview-row.sh`); `→` snaps back to the nearest pane row. Pane rows are indented deeper than headers so which kind of
-  row the cursor is on is legible at a glance, and the prompt line at the
-  top follows the mode (`change-header`).
+  the preview becomes one compact card per tracked pane —
+  `bin/session-digest.py` reads each pane's Claude Code transcript
+  (`~/.claude/projects/…/<session_id>.jsonl`, findable because the hooks
+  record `session_id`) and shows name/status/age, model + current context
+  size, and a recap of Claude's last reply); `→` snaps back to the
+  nearest pane row. Session headers are bold cyan and pane rows plain,
+  deeper-indented with a dimmed cwd, so which kind of row the cursor is
+  on is legible at a glance, and the prompt line at the top follows the
+  mode (`change-header`).
 - Jumping to a `DONE` pane calls `tmux_status_update.py mark-read` on it
   first, flipping it to `READ` — the same overwrite-on-status-change
   behavior above means it naturally goes back to unread `DONE` the next
@@ -183,12 +188,28 @@ place; no separate menu, no extra confirmation step for either.
 
 `←` flips the same list into session-select mode: the cursor snaps onto
 the `▾ session` header lines instead (up/down move session-to-session),
-and the preview becomes a digest of *every* tracked Claude pane in that
-session — each pane's status row as a title, then the tail of its screen,
-sized to fit the preview height — so one glance answers "what's everyone
-in this session up to". Enter drops you into the session (its last active
-pane). `→` flips back to pane-select. The deeper indent on pane rows is
-what tells you at a glance which mode you're in.
+and the preview becomes one compact card per tracked Claude pane in that
+session:
+
+```
+IDLE  ✳ news-run  2011s前
+opus-4-8 · ctx 49k · /Users/lsy/Zymix
+  已记下，以后严格执行：
+  - 不主动合并到生产分支……
+
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+RUN   ⠂ prototype-redesign  347s前
+fable-5 · ctx 361k · …/frontend-prototype-redesign
+  Now the logic implementation — check how …
+```
+
+— status, model, current context size, and a recap of Claude's last
+reply, pulled from each pane's transcript rather than scraped off the
+screen, sized to fit the preview height. One glance answers "what's
+everyone in this session up to". Enter drops you into the session (its
+last active pane). `→` flips back to pane-select. Bold-cyan headers vs
+plain, deeper-indented pane rows is what tells you at a glance which
+mode you're in.
 
 ## Notes
 
