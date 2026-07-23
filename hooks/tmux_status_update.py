@@ -24,6 +24,18 @@ Modes:
                     Cleared automatically the next time that pane goes
                     "running" or "done" again, since those overwrite the
                     whole entry.
+  clear             called by the SessionEnd hook: Claude Code exited in
+                    this pane ($TMUX_PANE), so drop its entry. Without
+                    this, quitting Claude and resuming it in another pane
+                    of the same window leaves a stale row behind (the old
+                    pane is still alive, so liveness checks don't catch
+                    it) and the window shows up twice in the picker.
+  prune             remove entries whose pane is gone, or whose pane is
+                    now just running a plain shell (Claude exited without
+                    SessionEnd firing — crash, kill, or a session started
+                    before the hook existed). Called by list-rows.sh /
+                    status-badge.sh / jump-top.sh before they read, as a
+                    safety net behind the SessionEnd hook.
 """
 import sys
 import os
@@ -179,6 +191,43 @@ def mark_archived(pane):
     with_status_file(apply)
 
 
+def clear_pane():
+    pane = os.environ.get("TMUX_PANE")
+    if not pane:
+        return
+
+    with_status_file(lambda data: data.pop(pane, None))
+
+
+# What a pane's foreground command looks like once Claude Code has exited
+# and dropped back to the shell. While Claude runs (even mid-tool-call)
+# tmux reports the claude process itself, not the shell.
+SHELLS = {"zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu"}
+
+
+def prune():
+    try:
+        out = subprocess.check_output(
+            ["tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}"],
+            stderr=subprocess.DEVNULL, text=True,
+        )
+    except Exception:
+        return  # can't reach a tmux server — don't wipe the file blind
+
+    cmd_of = {}
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2:
+            cmd_of[parts[0]] = parts[1]
+
+    def apply(data):
+        for pane in list(data):
+            if pane not in cmd_of or cmd_of[pane] in SHELLS:
+                del data[pane]
+
+    with_status_file(apply)
+
+
 def main():
     if len(sys.argv) < 2:
         return
@@ -197,6 +246,10 @@ def main():
         mark_read(sys.argv[2])
     elif mode == "mark-archived" and len(sys.argv) == 3:
         mark_archived(sys.argv[2])
+    elif mode == "clear":
+        clear_pane()
+    elif mode == "prune":
+        prune()
 
 
 if __name__ == "__main__":

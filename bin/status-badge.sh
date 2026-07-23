@@ -7,6 +7,13 @@ set -euo pipefail
 STATUS_FILE="$HOME/.claude/tmux-claude-status.json"
 [ -s "$STATUS_FILE" ] || exit 0
 
+# Clean out stale entries (dead pane / Claude exited) before counting.
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+[ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
+[ -s "$STATUS_FILE" ] || exit 0
+
 python3 - "$STATUS_FILE" <<'PYEOF'
 import json, sys, subprocess
 

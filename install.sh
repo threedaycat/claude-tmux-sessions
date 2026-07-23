@@ -53,6 +53,8 @@ ensure_hook("Stop",
             "python3 ~/.claude/hooks/tmux_status_update.py done 2>/dev/null || true")
 ensure_hook("Notification",
             "python3 ~/.claude/hooks/tmux_status_update.py notify 2>/dev/null || true")
+ensure_hook("SessionEnd",
+            "python3 ~/.claude/hooks/tmux_status_update.py clear 2>/dev/null || true")
 
 with open(path, "w") as f:
     json.dump(settings, f, indent=2)

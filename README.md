@@ -41,6 +41,16 @@ you a one-key picker to jump to it.
 - All four statuses overwrite the pane's whole entry, so a fresh
   `running`/`done`/`blocked`/`input` always starts unread and unarchived
   again.
+- A `SessionEnd` hook deletes the pane's entry when Claude Code exits.
+  Without it, quitting Claude and resuming in a *different* pane of the
+  same window would leave the old entry behind (the old pane is still
+  alive, so a liveness check alone can't catch it) and the window would
+  show up twice in the picker. As a safety net for exits that never fire
+  the hook (crash, `kill -9`, sessions started before the hook existed),
+  every reader first runs `tmux_status_update.py prune`, which also drops
+  entries whose pane is now just running a plain shell — while Claude is
+  alive (even mid-tool-call) tmux reports the claude process as
+  `pane_current_command`, so a bare `zsh`/`bash` there means it's gone.
 - They write to `~/.claude/tmux-claude-status.json`, keyed by tmux pane id
   (`$TMUX_PANE`). Sessions running outside tmux are silently ignored.
 - `bin/list-rows.sh` reads that file, cross-checks against
@@ -99,8 +109,8 @@ git clone <this-repo> ~/projects/claude-tmux-sessions
 
 This symlinks `hooks/tmux_status_update.py` and `bin/claude-tmux-picker.sh`
 into `~/.claude/hooks/` and merges the `UserPromptSubmit`/`Stop`/
-`Notification` hooks into `~/.claude/settings.json` (existing settings are
-preserved, not overwritten).
+`Notification`/`SessionEnd` hooks into `~/.claude/settings.json` (existing
+settings are preserved, not overwritten).
 
 Then add a tmux binding for the popup — this is the one step the installer
 leaves to you, since tmux configs vary. In `~/.tmux.conf` (or
@@ -168,9 +178,10 @@ place; no separate menu, no extra confirmation step for either.
   terminal-title updates (spinner while working, idle indicator) already
   drive your tmux window names — this tool is independent of that and reads
   its own state file, so the two don't conflict.
-- The status file only grows with tracked panes; stale entries (pane
-  closed) are filtered at display time, not deleted, so it stays small in
-  practice but isn't actively pruned.
+- The status file is actively pruned: the `SessionEnd` hook removes a
+  pane's entry when Claude exits, and every read (picker, badge, jump)
+  first drops entries for dead panes or panes that have fallen back to a
+  plain shell.
 
 ## License
 
