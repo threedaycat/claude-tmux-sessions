@@ -30,6 +30,8 @@ import os
 import json
 import time
 import fcntl
+import shlex
+import shutil
 import subprocess
 
 STATUS_FILE = os.path.expanduser("~/.claude/tmux-claude-status.json")
@@ -70,11 +72,43 @@ def with_status_file(fn):
         fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def notify_blocked(session_name, window_name, message):
+def frontmost_app():
+    try:
+        return subprocess.check_output(
+            ["osascript", "-e",
+             'tell application "System Events" to name of first process whose frontmost is true'],
+            stderr=subprocess.DEVNULL, text=True,
+        ).strip()
+    except Exception:
+        return None
+
+
+def notify_blocked(session_name, pane, window_name, message):
     """macOS notification — 'blocked' means Claude's progress is actually
-    stalled on a decision only the user can make, unlike a quiet 'done'."""
+    stalled on a decision only the user can make, unlike a quiet 'done'.
+    Clicking it (via terminal-notifier's -execute) jumps straight to the
+    pane; a plain osascript notification can't do that."""
     title = f"Claude 需要你处理 · {session_name}:{window_name}"
     body = message or "有权限确认或问题在等你回复"
+
+    if shutil.which("terminal-notifier"):
+        app = frontmost_app() or "iTerm2"
+        jump = (
+            f'osascript -e {shlex.quote("tell application " + json.dumps(app) + " to activate")}; '
+            f"tmux switch-client -t {shlex.quote(session_name)}; "
+            f"tmux select-window -t {shlex.quote(pane)}; "
+            f"tmux select-pane -t {shlex.quote(pane)}"
+        )
+        try:
+            subprocess.run(
+                ["terminal-notifier", "-title", title, "-message", body,
+                 "-sound", "Ping", "-execute", jump],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return
+        except Exception:
+            pass
+
     script = (
         f'display notification {json.dumps(body)} '
         f'with title {json.dumps(title)} sound name "Ping"'
@@ -111,7 +145,7 @@ def record_status(status, stdin_data):
     with_status_file(lambda data: data.__setitem__(pane, entry))
 
     if status == "blocked":
-        notify_blocked(session_name, window_name, stdin_data.get("message"))
+        notify_blocked(session_name, pane, window_name, stdin_data.get("message"))
 
 
 def record_notification():

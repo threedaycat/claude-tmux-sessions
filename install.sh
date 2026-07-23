@@ -49,6 +49,8 @@ ensure_hook("UserPromptSubmit",
             "python3 ~/.claude/hooks/tmux_status_update.py running 2>/dev/null || true")
 ensure_hook("Stop",
             "python3 ~/.claude/hooks/tmux_status_update.py done 2>/dev/null || true")
+ensure_hook("Notification",
+            "python3 ~/.claude/hooks/tmux_status_update.py notify 2>/dev/null || true")
 
 with open(path, "w") as f:
     json.dump(settings, f, indent=2)
@@ -57,6 +59,10 @@ with open(path, "w") as f:
 print("hooks merged into", path)
 PYEOF
 
+if ! command -v terminal-notifier >/dev/null 2>&1; then
+  echo "==> (可选) brew install terminal-notifier — 装了之后点击 blocked 通知能直接跳到那个 pane"
+fi
+
 cat <<'EOF'
 
 ==> 安装完成，还差最后一步（手动，因为每个人的 tmux 配置不一样）：
@@ -64,7 +70,11 @@ cat <<'EOF'
 在你的 tmux 配置文件（例如 ~/.tmux.conf 或 ~/.tmux.conf.local）里加一行绑定，
 用来弹出选择器，例如绑定到 prefix+g：
 
-    bind g display-popup -w 90% -h 60% -E "~/.claude/hooks/claude-tmux-picker.sh"
+    bind g run-shell 'tmux display-popup -w 95% -h 85% -E "CALLER_PANE=#{pane_id} ~/.claude/hooks/claude-tmux-picker.sh"'
+
+必须包一层 run-shell —— display-popup 自己的 -e/-E 参数不会被 tmux 做 format
+展开，只有 run-shell 的 shell-command 参数会（见 man tmux），所以 #{pane_id}
+要在这里先展开成真实值，再交给 display-popup。
 
 改完执行 `tmux source-file ~/.tmux.conf` (或对应的配置文件) 让它生效。
 
