@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Pick a tracked Claude Code tmux pane (running/done) and jump to it.
-# One fzf list, one kind of row: each entry IS a pane (a Claude Code
-# instance). Rows are grouped by session for readability, but the session
-# itself is never a selectable stop — only panes are. Arrow keys move the
-# live preview (right side) instantly; Enter jumps.
+# One fzf list: pane rows are the only selectable stops. Session header
+# rows are shown for visual grouping only — up/down/entry skip over them
+# via bin/skip-header.sh. Arrow keys move the live preview (right side)
+# instantly; Enter jumps.
 set -euo pipefail
+
+# Resolve through the ~/.claude/hooks symlink to this script's real location,
+# so skip-header.sh (which lives next to it) can always be found.
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+[ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 STATUS_FILE="$HOME/.claude/tmux-claude-status.json"
 
@@ -17,7 +23,8 @@ fi
 # Fields (tab-separated): display, pane_id
 # `display` is fully pre-formatted/padded/colored by the script below
 # (CJK-width aware) and is the only field fzf shows (--with-nth=1).
-# pane_id is hidden metadata used for the preview and the final jump.
+# Header rows (one per session, for visual grouping only) have an empty
+# pane_id field; pane rows carry their tmux pane id.
 rows=$(python3 - "$STATUS_FILE" <<'PYEOF'
 import json, sys, subprocess, time, unicodedata
 from collections import defaultdict
@@ -70,9 +77,15 @@ for pane, e in data.items():
 sessions_sorted = sorted(by_session.keys(), key=lambda s: min(k for k, *_ in by_session[s]))
 
 for s in sessions_sorted:
-    for _key, pane, label, age, winpane, wname, cwd in sorted(by_session[s], key=lambda x: x[0]):
+    entries = sorted(by_session[s], key=lambda x: x[0])
+    d = sum(1 for key, *_ in entries if key[0] == 0)
+    r = len(entries) - d
+    header = pad(f"▾ {s}", 18) + f"✅{d}  \U0001f3c3{r}"
+    print(f"{header}\t")
+
+    for _key, pane, label, age, winpane, wname, cwd in entries:
         display = (
-            pad(s, 18)
+            "  "
             + label
             + "  "
             + pad(f"{age}s前", 8)
@@ -91,16 +104,30 @@ if [ -z "$rows" ]; then
   exit 0
 fi
 
+TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
+HEADER_POS=$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "") print NR }' | paste -sd, -)
+export HEADER_POS=",${HEADER_POS}," TOTAL
+
 chosen=$(printf '%s\n' "$rows" | fzf --ansi --delimiter=$'\t' --with-nth=1 \
   --header='↑↓ 选择 Claude 窗口 (右侧预览实时更新)  ·  Enter 跳转 / Esc 取消' \
   --layout=reverse --height=100% \
-  --preview 'tmux capture-pane -p -e -S -200 -t "{2}" 2>&1 || echo "(pane 已关闭或无法读取)"' \
+  --preview 'tmux capture-pane -p -e -S -200 -t {2} 2>&1 || echo "(pane 已关闭或无法读取)"' \
   --preview-window='right,60%,border-left,wrap,follow' \
-  --preview-label=' Claude 实时画面 ')
+  --preview-label=' Claude 实时画面 ' \
+  --bind "load:transform:$BIN_DIR/skip-header.sh 0 init" \
+  --bind "down:transform:$BIN_DIR/skip-header.sh {n} down" \
+  --bind "up:transform:$BIN_DIR/skip-header.sh {n} up")
 
 [ -n "$chosen" ] || exit 0
 
 pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
+
+if [ -z "$pane_id" ]; then
+  # Landed on a header row somehow (e.g. it was the only line matching a
+  # search query) — there's nothing to jump to.
+  exit 0
+fi
+
 session=$(tmux display-message -p -t "$pane_id" '#{session_name}' 2>/dev/null || true)
 
 if [ -z "$session" ]; then

@@ -24,11 +24,12 @@ you a one-key picker to jump to it.
   (`$TMUX_PANE`). Sessions running outside tmux are silently ignored.
 - `bin/claude-tmux-picker.sh` reads that file, cross-checks against
   `tmux list-panes -a` (so closed panes disappear automatically), and shows
-  one `fzf` list where every row is a pane (`DONE`/`RUN`, age, session,
-  window, cwd — CJK-width-aware padded so columns line up). Rows are
-  grouped by session for readability, but the session itself is never a
-  separate selectable stop — only panes are, so every arrow-key move lands
-  on an actual Claude Code instance.
+  one `fzf` list with a header row per session (name + done/running counts)
+  followed by its panes (`DONE`/`RUN`, age, window, cwd — CJK-width-aware
+  padded so columns line up). The session header is visual grouping only:
+  `bin/skip-header.sh`, wired up via `--bind up/down/load:transform:...`
+  and fzf's `pos()` action, makes arrow keys jump straight over it, so
+  every stop is an actual Claude Code pane, never a session line.
 - Moving the selection instantly re-runs `tmux capture-pane -S -200` on the
   highlighted pane in the right-hand preview, scrolled to the bottom
   (`follow`) so you always see the most recent output, not the oldest line
@@ -68,18 +69,20 @@ Claude Code session run `/hooks` once so it picks up the new config
 
 ## Use
 
-Press `prefix + g` (or whatever key you bound) anywhere in tmux. One list,
-grouped by session:
+Press `prefix + g` (or whatever key you bound) anywhere in tmux:
 
 ```
-news              DONE  57s前   4.1    prototype-redesign      /Users/you/repos/frontend
-news              DONE  82s前   3.1    write-readme            /Users/you/repos/backend
-fun               RUN   331s前  2.1    tmux-picker             /Users/you
+▾ news                      ✅1  🏃1
+  DONE  57s前   4.1    prototype-redesign      /Users/you/repos/frontend
+  RUN   82s前   3.1    write-readme            /Users/you/repos/backend
+▾ fun                       ✅0  🏃1
+  RUN   331s前  2.1    tmux-picker             /Users/you
 ```
 
-Arrow up/down moves between panes only — the right-hand preview instantly
-shows that pane's live content, scrolled to the bottom. Enter jumps
-immediately; no separate menu, no extra confirmation step.
+Arrow up/down moves between panes only — the `▾ session` lines are skipped
+automatically, so every stop shows a real Claude Code pane and the
+right-hand preview instantly follows it, scrolled to the bottom. Enter
+jumps immediately; no separate menu, no extra confirmation step.
 
 ## Notes
 
