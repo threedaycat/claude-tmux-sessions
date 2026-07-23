@@ -29,7 +29,15 @@ if [ -n "$digest" ]; then
   printf '%s\n' "$digest"
 else
   # Session exists but has no tracked Claude panes — fall back to its
-  # active pane. "=name:" — exact session match, trailing colon = its
-  # current window's active pane (a bare "=name" is rejected).
-  tmux capture-pane -p -e -S -200 -t "=$session:" 2>&1 || echo "(session 已关闭或无法读取)"
+  # active pane. Resolved by exact string match over list-panes instead
+  # of a "=$session:" target, because tmux allows ':' and '.' in session
+  # names and those would derail target parsing.
+  active=$(tmux list-panes -a \
+      -F "#{session_name}	#{window_active}#{pane_active}	#{pane_id}" 2>/dev/null \
+    | awk -F'\t' -v s="$session" '$1==s && $2=="11" { print $3; exit }')
+  if [ -n "$active" ]; then
+    tmux capture-pane -p -e -S -200 -t "$active" 2>&1 || echo "(session 已关闭或无法读取)"
+  else
+    echo "(session 已关闭或无法读取)"
+  fi
 fi

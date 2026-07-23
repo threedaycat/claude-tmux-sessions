@@ -26,8 +26,13 @@ resumed=$(python3 - "$RESTORE_FILE" "$DRY_RUN" <<'PYEOF'
 import json, shlex, subprocess, sys
 
 restore_file, dry_run = sys.argv[1], sys.argv[2] == "1"
-with open(restore_file) as f:
-    mapping = json.load(f)
+try:
+    with open(restore_file) as f:
+        mapping = json.load(f)
+except Exception:
+    sys.exit(0)  # unreadable/corrupt map — restore nothing rather than error
+if not isinstance(mapping, dict):
+    sys.exit(0)
 
 fmt = "#{session_name}:#{window_index}.#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}"
 try:

@@ -82,10 +82,10 @@ for pane, e in data.items():
     status = e.get("status", "running")
     if status == "blocked":
         label, rank = "\033[1;31mWAIT\033[0m", -1   # permission choice — top priority, notified
+    elif status in ("done", "input") and e.get("read"):
+        label, rank = "\033[34mREAD\033[0m", 3      # already visited once — quiet until it stirs again
     elif status == "input":
         label, rank = "\033[35mIDLE\033[0m", 0      # idle, waiting on your next message
-    elif status == "done" and e.get("read"):
-        label, rank = "\033[34mREAD\033[0m", 3      # done, already visited once
     elif status == "done":
         label, rank = "\033[1;32mDONE\033[0m", 1    # done, not seen yet
     else:

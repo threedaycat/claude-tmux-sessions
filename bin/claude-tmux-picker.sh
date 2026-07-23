@@ -75,37 +75,43 @@ chosen=$(printf '%s\n' "$rows" | fzf "${fzf_args[@]}" || true)
 
 pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
 
+# All jumps target a pane id, never a session/window name: tmux allows
+# ':' and '.' in session names, which derail name-based target parsing,
+# while switch-client happily resolves a %pane id to its session.
 if [ -z "$pane_id" ]; then
-  # Session header row (session-select mode): jump to the whole session —
-  # tmux lands you on its last active window/pane on its own.
+  # Session header row (session-select mode): jump to the session's
+  # active pane — i.e. where you last were in that session. Resolved by
+  # exact string match over list-panes for the same reason as above.
   session=$(printf '%s' "$chosen" | awk -F'\t' '{print $3}')
   [ -n "$session" ] || exit 0
-  if [ -n "${TMUX:-}" ]; then
-    tmux switch-client -t "=$session"
-  else
-    tmux attach -t "=$session"
+  pane_id=$(tmux list-panes -a \
+      -F "#{session_name}	#{window_active}#{pane_active}	#{pane_id}" 2>/dev/null \
+    | awk -F'\t' -v s="$session" '$1==s && $2=="11" { print $3; exit }')
+  if [ -z "$pane_id" ]; then
+    echo "session 已经不存在了 ($session)。"
+    sleep 1.5
+    exit 0
   fi
+  tmux switch-client -t "$pane_id" 2>/dev/null \
+    || tmux attach -t "$pane_id"
   exit 0
 fi
 
-session=$(tmux display-message -p -t "$pane_id" '#{session_name}' 2>/dev/null || true)
-
-if [ -z "$session" ]; then
+if ! tmux display-message -p -t "$pane_id" '' >/dev/null 2>&1; then
   echo "pane 已经不存在了 ($pane_id)。"
   sleep 1.5
   exit 0
 fi
 
-# Visiting a DONE pane means "I've seen this" — mark it read so it stops
-# showing up as unread next time (RUN/blocked/input panes are unaffected:
-# the status field isn't "done" so the read flag has no visible effect
-# until a future "done" actually happens).
+# Visiting a DONE/IDLE pane means "I've seen this" — mark it read so it
+# stops showing up as unread next time (RUN/blocked panes are unaffected:
+# the read flag has no visible effect until a future done/input happens).
 python3 "$STATUS_UPDATER" mark-read "$pane_id" 2>/dev/null || true
 
 if [ -n "${TMUX:-}" ]; then
-  tmux switch-client -t "$session"
+  tmux switch-client -t "$pane_id"
   tmux select-window -t "$pane_id"
   tmux select-pane -t "$pane_id"
 else
-  tmux attach -t "$session" \; select-window -t "$pane_id" \; select-pane -t "$pane_id"
+  tmux attach -t "$pane_id" \; select-window -t "$pane_id" \; select-pane -t "$pane_id"
 fi
