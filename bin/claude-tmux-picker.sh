@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# Pick a tracked Claude Code tmux pane (running/done) and jump to it.
-# One fzf list: pane rows are the only selectable stops. Session header
+# Pick a tracked Claude Code tmux pane (running/done/blocked) and jump to
+# it. One fzf list: pane rows are the only selectable stops. Session header
 # rows are shown for visual grouping only — up/down/entry skip over them
 # via bin/skip-header.sh. Arrow keys move the live preview (right side)
-# instantly; Enter jumps.
+# instantly; Enter jumps; ctrl-x archives a pane you're done caring about.
 set -euo pipefail
 
 # Resolve through the ~/.claude/hooks symlink to this script's real location,
-# so skip-header.sh (which lives next to it) can always be found.
+# so the sibling scripts (list-rows.sh, skip-header.sh, ../hooks/...) can
+# always be found regardless of how this script was invoked.
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 [ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
 BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+STATUS_UPDATER="$BIN_DIR/../hooks/tmux_status_update.py"
 
 STATUS_FILE="$HOME/.claude/tmux-claude-status.json"
 
@@ -20,94 +22,13 @@ if [ ! -s "$STATUS_FILE" ]; then
   exit 0
 fi
 
-# Fields (tab-separated): display, pane_id
-# `display` is fully pre-formatted/padded/colored by the script below
-# (CJK-width aware) and is the only field fzf shows (--with-nth=1).
-# Header rows (one per session, for visual grouping only) have an empty
-# pane_id field; pane rows carry their tmux pane id.
-rows=$(python3 - "$STATUS_FILE" <<'PYEOF'
-import json, sys, subprocess, time, unicodedata
-from collections import defaultdict
-
-status_file = sys.argv[1]
-with open(status_file) as f:
-    data = json.load(f)
-
-fmt = "#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_current_path}"
-try:
-    out = subprocess.check_output(["tmux", "list-panes", "-a", "-F", fmt], text=True)
-except Exception:
-    out = ""
-
-live = {}
-for line in out.splitlines():
-    parts = line.split("\t")
-    if len(parts) == 6:
-        live[parts[0]] = parts
-
-
-def vwidth(s):
-    w = 0
-    for ch in s:
-        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-    return w
-
-
-def pad(s, width):
-    w = vwidth(s)
-    return s if w >= width else s + " " * (width - w)
-
-
-now = time.time()
-by_session = defaultdict(list)
-for pane, e in data.items():
-    if pane not in live:
-        continue
-    _, session, _win_idx, window_name, _pane_idx, cwd = live[pane]
-    age = int(now - e.get("updated_at", now))
-    status = e.get("status", "running")
-    if status == "done" and e.get("read"):
-        label, rank = "\033[34mREAD\033[0m", 2   # done, already visited once
-    elif status == "done":
-        label, rank = "\033[1;32mDONE\033[0m", 0  # done, not seen yet
-    else:
-        label, rank = "\033[33mRUN \033[0m", 1
-    key = (rank, -e.get("updated_at", 0))
-    by_session[session].append((key, pane, label, age, window_name, cwd))
-
-sessions_sorted = sorted(by_session.keys(), key=lambda s: min(k for k, *_ in by_session[s]))
-
-for s in sessions_sorted:
-    entries = sorted(by_session[s], key=lambda x: x[0])
-    d_unread = sum(1 for key, *_ in entries if key[0] == 0)
-    d_read = sum(1 for key, *_ in entries if key[0] == 2)
-    r = sum(1 for key, *_ in entries if key[0] == 1)
-    header = pad(f"▾ {s}", 18) + f"✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
-    print(f"{header}\t")
-
-    for _key, pane, label, age, wname, cwd in entries:
-        display = (
-            "  "
-            + label
-            + "  "
-            + pad(f"{age}s前", 8)
-            + pad(wname, 24)
-            + "  "
-            + cwd
-        )
-        print(f"{display}\t{pane}")
-PYEOF
-)
+rows="$("$BIN_DIR/list-rows.sh")"
 
 if [ -z "$rows" ]; then
   echo "没有找到仍然存活的 Claude Code tmux pane。"
   sleep 1.5
   exit 0
 fi
-
-TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
-HEADER_POS=$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "") print NR }' | paste -sd, -)
-export HEADER_POS=",${HEADER_POS}," TOTAL
 
 # Default initial cursor: first pane row, skipping the leading header.
 # If this popup was opened via the tmux binding that passes CALLER_PANE
@@ -121,14 +42,15 @@ if [ -n "${CALLER_PANE:-}" ]; then
 fi
 
 chosen=$(printf '%s\n' "$rows" | fzf --ansi --delimiter=$'\t' --with-nth=1 \
-  --header='↑↓ 选择 Claude 窗口 (右侧预览实时更新)  ·  Enter 跳转 / Esc 取消' \
+  --header='↑↓ 选择 Claude 窗口 (右侧预览实时更新) · Enter 跳转 · ctrl-x 归档 · Esc 取消' \
   --layout=reverse --height=100% \
   --preview 'tmux capture-pane -p -e -S -200 -t {2} 2>&1 || echo "(pane 已关闭或无法读取)"' \
   --preview-window='right,60%,border-left,wrap,follow' \
   --preview-label=' Claude 实时画面 ' \
   --bind "$LOAD_BIND" \
   --bind "down:transform:$BIN_DIR/skip-header.sh {n} down" \
-  --bind "up:transform:$BIN_DIR/skip-header.sh {n} up")
+  --bind "up:transform:$BIN_DIR/skip-header.sh {n} up" \
+  --bind "ctrl-x:execute-silent(python3 '$STATUS_UPDATER' mark-archived {2})+reload($BIN_DIR/list-rows.sh)")
 
 [ -n "$chosen" ] || exit 0
 
@@ -149,9 +71,10 @@ if [ -z "$session" ]; then
 fi
 
 # Visiting a DONE pane means "I've seen this" — mark it read so it stops
-# showing up as unread next time (RUN panes are unaffected: the status
-# field still says "running" so the read flag has no visible effect).
-python3 "$BIN_DIR/../hooks/tmux_status_update.py" mark-read "$pane_id" 2>/dev/null || true
+# showing up as unread next time (RUN/blocked panes are unaffected: the
+# status field still says running/blocked so the read flag has no visible
+# effect until a future "done" actually happens).
+python3 "$STATUS_UPDATER" mark-read "$pane_id" 2>/dev/null || true
 
 if [ -n "${TMUX:-}" ]; then
   tmux switch-client -t "$session"
