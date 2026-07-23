@@ -4,7 +4,8 @@ Run multiple [Claude Code](https://claude.com/claude-code) sessions across
 tmux windows, and jump straight to the one that just finished — without
 tabbing through windows one by one.
 
-Claude Code hooks record `running` / `done` status per tmux pane; an
+Claude Code hooks record `running` / `done` status per tmux pane (plus a
+`read` flag once you've actually visited a done pane, like an inbox); an
 `fzf`-powered popup lists every tracked pane (grouped by session) with a
 live content preview, and switches you there on Enter.
 
@@ -19,17 +20,24 @@ you a one-key picker to jump to it.
 
 - A `UserPromptSubmit` hook marks the current pane `running`.
 - A `Stop` hook marks it `done` (Claude finished its turn and is waiting on
-  you).
+  you). Both overwrite the pane's whole entry, so a fresh `running`/`done`
+  always starts unread again.
 - Both write to `~/.claude/tmux-claude-status.json`, keyed by tmux pane id
   (`$TMUX_PANE`). Sessions running outside tmux are silently ignored.
 - `bin/claude-tmux-picker.sh` reads that file, cross-checks against
   `tmux list-panes -a` (so closed panes disappear automatically), and shows
-  one `fzf` list with a header row per session (name + done/running counts)
-  followed by its panes (`DONE`/`RUN`, age, window, cwd — CJK-width-aware
-  padded so columns line up). The session header is visual grouping only:
+  one `fzf` list with a header row per session (name + done/running/read
+  counts) followed by its panes: `DONE` (bold green, finished and unseen),
+  `RUN` (yellow, still working), or `READ` (blue, finished and you've
+  already jumped to it once) — age, window, cwd, CJK-width-aware padded so
+  columns line up. The session header is visual grouping only:
   `bin/skip-header.sh`, wired up via `--bind up/down/load:transform:...`
   and fzf's `pos()` action, makes arrow keys jump straight over it, so
   every stop is an actual Claude Code pane, never a session line.
+- Jumping to a `DONE` pane calls `tmux_status_update.py mark-read` on it
+  first, flipping it to `READ` — the same overwrite-on-`running`/`done`
+  behavior above means it naturally goes back to unread `DONE` the next
+  time that pane actually finishes something new.
 - Moving the selection instantly re-runs `tmux capture-pane -S -200` on the
   highlighted pane in the right-hand preview, scrolled to the bottom
   (`follow`) so you always see the most recent output, not the oldest line
@@ -72,11 +80,11 @@ Claude Code session run `/hooks` once so it picks up the new config
 Press `prefix + g` (or whatever key you bound) anywhere in tmux:
 
 ```
-▾ news                      ✅1  🏃1
-  DONE  57s前   4.1    prototype-redesign      /Users/you/repos/frontend
-  RUN   82s前   3.1    write-readme            /Users/you/repos/backend
-▾ fun                       ✅0  🏃1
-  RUN   331s前  2.1    tmux-picker             /Users/you
+▾ news                      ✅1  🏃1  👀0
+  DONE  57s前   prototype-redesign      /Users/you/repos/frontend
+  RUN   82s前   write-readme            /Users/you/repos/backend
+▾ fun                       ✅0  🏃0  👀1
+  READ  331s前  tmux-picker             /Users/you
 ```
 
 Arrow up/down moves between panes only — the `▾ session` lines are skipped
