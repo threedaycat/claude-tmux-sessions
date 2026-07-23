@@ -70,6 +70,10 @@ you a one-key picker to jump to it.
 - [fzf](https://github.com/junegunn/fzf)
 - python3
 - Claude Code with hooks support
+- macOS, for the `blocked` notification (`osascript`) — everything else is
+  plain tmux/bash/python3 and should work anywhere; on other platforms the
+  notification call just fails silently and the `WAIT` row in the picker
+  still works
 
 ## Install
 
