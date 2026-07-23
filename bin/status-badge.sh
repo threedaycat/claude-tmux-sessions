@@ -39,14 +39,20 @@ for pane, e in data.items():
     elif status == "done" and not e.get("read"):
         done_unread += 1
 
+# One glyph, colour-coded to the theme palette (red=blocked,
+# green=done-unread, magenta=idle — the same hues as the picker's
+# WAIT/DONE/IDLE labels) instead of emoji — emoji bring their own colours
+# and sizes and clash with the rest of the status line. tmux honours
+# #[...] style directives inside #() output; #[default] restores the
+# status-right style for whatever segment follows.
 parts = []
 if blocked:
-    parts.append(f"🔴{blocked}")
+    parts.append(f"#[fg=#d70000]● {blocked}")
 if done_unread:
-    parts.append(f"✅{done_unread}")
+    parts.append(f"#[fg=#5fff00]● {done_unread}")
 if idle:
-    parts.append(f"⏳{idle}")
+    parts.append(f"#[fg=#ff00af]● {idle}")
 
 if parts:
-    print(" ".join(parts) + " ")
+    print("  ".join(parts) + "#[default] ")
 PYEOF

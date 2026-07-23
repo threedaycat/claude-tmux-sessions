@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Session-header preview: one compact card per tracked Claude pane in the
-session, instead of raw screen dumps — title (name/status/age), a meta
-line (model, context size, cwd) read from the pane's Claude Code
+session, instead of raw screen dumps — title (name/status/age), a task
+line (the session's first real prompt — what this pane is working on), a
+meta line (model, context size, cwd) read from the pane's Claude Code
 transcript, and a short recap: the tail of Claude's last text reply.
+Cards are separated by a blank line plus a full-width rule.
 
 args: session_name
 env:  FZF_PREVIEW_LINES / FZF_PREVIEW_COLUMNS (set by fzf)
@@ -79,12 +81,45 @@ def wrap(text, width, max_lines):
     return lines
 
 
+def first_prompt(path):
+    """The session's first real user prompt, collapsed to one line — the
+    closest thing to 'what is this pane working on'. Transcripts have no
+    auto-summary records, and custom-title just mirrors the tmux window
+    name, so the opening ask is the best task label available. Skips
+    meta/command wrapper entries (isMeta, <command-name>…, Caveat:…)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(300_000).decode("utf-8", "replace")
+    except OSError:
+        return None
+    for line in head.splitlines():
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if obj.get("type") != "user" or obj.get("isMeta"):
+            continue
+        c = obj.get("message", {}).get("content")
+        if isinstance(c, list):
+            text = "\n".join(
+                b.get("text", "") for b in c
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        else:
+            text = c or ""
+        text = text.strip()
+        if not text or text.startswith("<") or text.startswith("Caveat:"):
+            continue
+        return " ".join(text.split())
+    return None
+
+
 def transcript_info(entry):
-    """(model, context_tokens, recap_text) from the pane's transcript, or
-    (None, None, None) if it can't be found/parsed."""
+    """(model, context_tokens, recap_text, task) from the pane's
+    transcript, or all-None if it can't be found/parsed."""
     sid, cwd = entry.get("session_id"), entry.get("cwd")
     if not sid or not cwd:
-        return None, None, None
+        return None, None, None, None
     path = os.path.join(PROJECTS_DIR, cwd.replace("/", "-"), sid + ".jsonl")
     try:
         with open(path, "rb") as f:
@@ -93,7 +128,7 @@ def transcript_info(entry):
             f.seek(max(0, size - 400_000))
             lines = f.read().decode("utf-8", "replace").splitlines()
     except OSError:
-        return None, None, None
+        return None, None, None, None
 
     model = ctx = recap = None
     for line in reversed(lines):
@@ -116,7 +151,7 @@ def transcript_info(entry):
         if texts and texts[-1].strip():
             recap = texts[-1].strip()
             break
-    return model, ctx, recap
+    return model, ctx, recap, first_prompt(path)
 
 
 def label_of(entry):
@@ -169,20 +204,30 @@ def main():
 
     width = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
     avail = int(os.environ.get("FZF_PREVIEW_LINES", 40))
-    # per card: separator + title + meta = 3 lines of overhead
-    recap_lines = max(2, min(6, avail // len(cards) - 3))
+    # per card: separator (blank + rule) + title + task + meta = 5 lines
+    # of overhead
+    recap_lines = max(2, min(6, avail // len(cards) - 5))
 
     first = True
     for _rank, _neg, pane, label, e in cards:
+        # A blank line plus a full-width rule between cards — the old
+        # single thin dashed line wasn't enough visual separation to tell
+        # where one pane's card ended and the next began.
         if not first:
-            print(DIM + "╌" * width + RESET)
+            print()
+            print(DIM + "─" * width + RESET)
         first = False
 
         age = int(now - e.get("updated_at", now))
         title = f"{label}  {BOLD}{clip(win_of[pane], width - 18)}{RESET}  {DIM}{age}s前{RESET}"
         print(title)
 
-        model, ctx, recap = transcript_info(e)
+        model, ctx, recap, task = transcript_info(e)
+
+        # What this pane is working on — its first real prompt.
+        if task:
+            print("\033[36m❯\033[0m " + clip(task, width - 2))
+
         meta = []
         if model:
             meta.append(model.replace("claude-", ""))
@@ -193,9 +238,9 @@ def main():
 
         if recap:
             for ln in wrap(recap, width - 2, recap_lines):
-                print("  " + ln)
+                print(DIM + "▎" + RESET + " " + ln)
         else:
-            print(DIM + "  (还没有回复内容)" + RESET)
+            print(DIM + "▎ (还没有回复内容)" + RESET)
 
 
 if __name__ == "__main__":
