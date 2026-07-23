@@ -107,9 +107,20 @@ for s in sessions_sorted:
     # Bold cyan headers vs plain, deeper-indented pane rows: the two row
     # kinds have to read apart instantly, since either can hold the
     # cursor depending on the left/right mode.
+    # Counts as ●N dots in the exact colours of the row labels below
+    # (red=WAIT, magenta=IDLE, green=DONE, yellow=RUN, blue=READ) — one
+    # glyph, colour carries the meaning, and zero counts are simply
+    # omitted instead of parading a row of 0s.
+    counts = "  ".join(
+        f"\033[{colour}m● {n}\033[0m"
+        for colour, n in (
+            ("1;31", blocked), ("35", idle), ("1;32", d_unread),
+            ("33", r), ("34", d_read),
+        )
+        if n
+    )
     header = (
-        "\033[1;36m" + pad(f"▾ {sid_label}{s}", 22) + "\033[0m"
-        + f"🔴{blocked}  ⏳{idle}  ✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
+        "\033[1;36m" + pad(f"▾ {sid_label}{s}", 22) + "\033[0m" + counts
     )
     print(f"{header}\t\t{s}")
 

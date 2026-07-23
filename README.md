@@ -10,8 +10,9 @@ pane, like an inbox, and an archive flag to dismiss ones you're done
 with); an `fzf`-powered popup lists every tracked pane (grouped by
 session, in a stable order) with a live content preview, and switches you
 there on Enter. Only `blocked` (Claude needs an explicit permission
-approve/deny) fires a macOS notification — that's the one status that
-actually stalls progress; `input` (Claude's just idle, waiting on your
+approve/deny) fires a notification — an in-tmux status-line flash on
+every attached client plus a macOS notification — because that's the one
+status that actually stalls progress; `input` (Claude's just idle, waiting on your
 next message) shows up in the list but doesn't interrupt you.
 
 ## Why
@@ -31,10 +32,17 @@ you a one-key picker to jump to it.
   different situations Claude Code lumps into one event:
   - `permission_prompt` → `blocked` — Claude is stuck waiting on an
     explicit approve/deny choice, which actually stalls its progress. This
-    is the only status that also fires a macOS notification, via
-    `terminal-notifier` if installed (so clicking it jumps straight to the
-    pane) or plain `osascript` otherwise (informational only), since you
-    might not have the picker open at all.
+    is the only status that also notifies, two ways at once:
+    - **in tmux**: a status-line message (`tmux display-message -d 5000`)
+      flashed on every attached client, naming the session/window and
+      reminding you `prefix W` jumps straight there (`blocked` ranks first
+      in jump-top). Clients already looking at the notifying pane are
+      skipped — the permission prompt is on their screen. Works
+      full-screen and under Do Not Disturb, no macOS involved.
+    - **on macOS**: via `terminal-notifier` if installed (so clicking it
+      jumps straight to the pane) or plain `osascript` otherwise
+      (informational only) — covers the case where you're in another app
+      and not looking at the terminal at all.
   - anything else (`idle_prompt`, unrecognized) → `input` — Claude's done
     and just waiting on your next message. Worth a glance, not urgent, no
     notification.
@@ -76,8 +84,11 @@ you a one-key picker to jump to it.
   the preview becomes one compact card per tracked pane —
   `bin/session-digest.py` reads each pane's Claude Code transcript
   (`~/.claude/projects/…/<session_id>.jsonl`, findable because the hooks
-  record `session_id`) and shows name/status/age, model + current context
-  size, and a recap of Claude's last reply); `→` snaps back to the
+  record `session_id`) and shows name/status/age, a `❯` task line (the
+  session's first real prompt — what this pane is working on), model +
+  current context size, and a `▎`-quoted recap of Claude's last reply,
+  each card separated by a blank line and a full-width rule); `→` snaps
+  back to the
   nearest pane row. Session headers are bold cyan and pane rows plain,
   deeper-indented with a dimmed cwd, so which kind of row the cursor is
   on is legible at a glance, and the prompt line at the top follows the
@@ -105,10 +116,10 @@ you a one-key picker to jump to it.
 - [fzf](https://github.com/junegunn/fzf)
 - python3
 - Claude Code with hooks support
-- macOS, for the `blocked` notification — everything else is plain
-  tmux/bash/python3 and should work anywhere; on other platforms the
-  notification call just fails silently and the `WAIT` row in the picker
-  still works
+- macOS, for the `blocked` *system* notification only — the in-tmux
+  status-line flash and everything else is plain tmux/bash/python3 and
+  should work anywhere; on other platforms the macOS notification call
+  just fails silently and the flash + `WAIT` row in the picker still work
 - optional: [terminal-notifier](https://github.com/julienXX/terminal-notifier)
   (`brew install terminal-notifier`) so clicking the `blocked` notification
   jumps straight to the pane; without it you still get a notification, just
@@ -156,8 +167,9 @@ bind W run-shell '~/.claude/hooks/jump-top.sh'
 ```
 
 ```tmux
-# ambient status-bar segment (🔴 blocked  ✅ done-unread  ⏳ idle),
-# visible in every session's status line without opening anything —
+# ambient status-bar segment: colour-coded ● counts (red blocked,
+# green done-unread, magenta idle; zero counts omitted), visible in
+# every session's status line without opening anything —
 # splice this into your status-right
 #(~/.claude/hooks/status-badge.sh)
 ```
@@ -167,14 +179,18 @@ bind W run-shell '~/.claude/hooks/jump-top.sh'
 Press `prefix + g` (or whatever key you bound) anywhere in tmux:
 
 ```
-▾ $1 news               🔴0  ⏳1  ✅1  🏃1  👀0
+▾ $1 news               ● 1  ● 1  ● 1
     prototype-redesign        DONE  57s前   /Users/you/repos/frontend
     backend-notes             IDLE  90s前   /Users/you/repos/backend
     write-readme              RUN   82s前   /Users/you/repos/backend
-▾ $2 fun                🔴1  ⏳0  ✅0  🏃0  👀1
+▾ $2 fun                ● 1  ● 1
     tmux-picker               WAIT  12s前   /Users/you
     claude                    READ  331s前  /Users/you
 ```
+
+The ● N counts on a session header use the same colours as the row labels
+below them (red WAIT, magenta IDLE, green DONE, yellow RUN, blue READ) —
+one glyph, colour carries the meaning — and zero counts are omitted.
 
 The window name leads each pane row — "what is this one doing" is the
 first thing you scan for — with the status right after it.

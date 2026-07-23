@@ -153,6 +153,39 @@ def notify_blocked(session_name, pane, window_name, message):
         pass
 
 
+def tmux_flash(session_name, window_name, pane):
+    """In-tmux notification: flash a status-line message on every attached
+    client, so a `blocked` pane is noticeable without leaving tmux (the
+    macOS notification covers the you're-in-another-app case; this covers
+    full-screen terminal / Do Not Disturb). Skips any client currently
+    looking at the notifying pane — the permission prompt itself is
+    already on that screen. `prefix W` (jump-top) then jumps straight to
+    it, since `blocked` ranks first there."""
+    try:
+        clients = subprocess.check_output(
+            ["tmux", "list-clients", "-F", "#{client_name}"],
+            stderr=subprocess.DEVNULL, text=True,
+        ).split()
+    except Exception:
+        return
+
+    msg = f"● Claude 等你确认 · {session_name} · {window_name} — prefix W 跳转"
+    for client in clients:
+        try:
+            active = subprocess.check_output(
+                ["tmux", "display-message", "-p", "-c", client, "#{pane_id}"],
+                stderr=subprocess.DEVNULL, text=True,
+            ).strip()
+            if active == pane:
+                continue
+            subprocess.run(
+                ["tmux", "display-message", "-c", client, "-d", "5000", msg],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+
 def record_status(status, stdin_data):
     pane = os.environ.get("TMUX_PANE")
     if not pane:
@@ -196,6 +229,7 @@ def record_status(status, stdin_data):
         with_status_file(update_restore, path=RESTORE_FILE)
 
     if status == "blocked":
+        tmux_flash(session_name, window_name, pane)
         notify_blocked(session_name, pane, window_name, stdin_data.get("message"))
 
 
