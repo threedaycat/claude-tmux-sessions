@@ -5,7 +5,7 @@ tmux windows, and jump straight to the one that just finished — without
 tabbing through windows one by one.
 
 Claude Code hooks record `running` / `done` status per tmux pane; an
-`fzf`-powered popup shows a single session → window → pane tree with a
+`fzf`-powered popup lists every tracked pane (grouped by session) with a
 live content preview, and switches you there on Enter.
 
 ## Why
@@ -23,15 +23,17 @@ you a one-key picker to jump to it.
 - Both write to `~/.claude/tmux-claude-status.json`, keyed by tmux pane id
   (`$TMUX_PANE`). Sessions running outside tmux are silently ignored.
 - `bin/claude-tmux-picker.sh` reads that file, cross-checks against
-  `tmux list-panes -a` (so closed panes disappear automatically), and
-  renders a single `fzf` list as a tree: session line (done/running counts),
-  its window lines (same counts, scoped to that window), and its pane lines
-  (`DONE`/`RUN`, age, cwd) — all CJK-width-aware padded so columns line up.
-  One screen, no intermediate menus: arrow keys move through the whole tree
-  and `bin/preview-pane.sh` shows a live `tmux capture-pane` preview of
-  whatever row is highlighted (a session/window row previews its current
-  pane). Enter on any row jumps there (`switch-client` + `select-window` +
-  `select-pane` as applicable); Esc cancels.
+  `tmux list-panes -a` (so closed panes disappear automatically), and shows
+  one `fzf` list where every row is a pane (`DONE`/`RUN`, age, session,
+  window, cwd — CJK-width-aware padded so columns line up). Rows are
+  grouped by session for readability, but the session itself is never a
+  separate selectable stop — only panes are, so every arrow-key move lands
+  on an actual Claude Code instance.
+- Moving the selection instantly re-runs `tmux capture-pane -S -200` on the
+  highlighted pane in the right-hand preview, scrolled to the bottom
+  (`follow`) so you always see the most recent output, not the oldest line
+  of scrollback. Enter jumps there (`switch-client` + `select-window` +
+  `select-pane`); Esc cancels.
 
 ## Requirements
 
@@ -50,8 +52,7 @@ git clone <this-repo> ~/projects/claude-tmux-sessions
 This symlinks `hooks/tmux_status_update.py` and `bin/claude-tmux-picker.sh`
 into `~/.claude/hooks/` and merges the `UserPromptSubmit`/`Stop` hooks into
 `~/.claude/settings.json` (existing settings are preserved, not
-overwritten). `bin/preview-pane.sh` is called directly from the repo path
-by the picker, so it doesn't need its own symlink.
+overwritten).
 
 Then add a tmux binding for the popup — this is the one step the installer
 leaves to you, since tmux configs vary. In `~/.tmux.conf` (or
@@ -67,23 +68,18 @@ Claude Code session run `/hooks` once so it picks up the new config
 
 ## Use
 
-Press `prefix + g` (or whatever key you bound) anywhere in tmux. You get one
-tree, one screen:
+Press `prefix + g` (or whatever key you bound) anywhere in tmux. One list,
+grouped by session:
 
 ```
-▾ news                      ✅2  🏃0
-  ▸ 4:prototype-redesign    ✅1  🏃0
-    4.1    DONE  57s前   /Users/you/repos/frontend
-  ▸ 3:write-readme          ✅1  🏃0
-    3.1    DONE  82s前   /Users/you/repos/backend
-▾ fun                       ✅0  🏃1
-  ▸ 2:tmux-picker           ✅0  🏃1
-    2.1    RUN   331s前  /Users/you
+news              DONE  57s前   4.1    prototype-redesign      /Users/you/repos/frontend
+news              DONE  82s前   3.1    write-readme            /Users/you/repos/backend
+fun               RUN   331s前  2.1    tmux-picker             /Users/you
 ```
 
-Arrow up/down through it — the right-hand preview updates live to whatever
-row you're on. Enter jumps immediately; no extra confirmation step, no
-separate menu to "enter" first.
+Arrow up/down moves between panes only — the right-hand preview instantly
+shows that pane's live content, scrolled to the bottom. Enter jumps
+immediately; no separate menu, no extra confirmation step.
 
 ## Notes
 
