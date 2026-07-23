@@ -23,6 +23,8 @@ mkdir -p "$CLAUDE_HOOKS_DIR"
 echo "==> linking scripts into $CLAUDE_HOOKS_DIR"
 ln -sf "$REPO_DIR/hooks/tmux_status_update.py" "$CLAUDE_HOOKS_DIR/tmux_status_update.py"
 ln -sf "$REPO_DIR/bin/claude-tmux-picker.sh" "$CLAUDE_HOOKS_DIR/claude-tmux-picker.sh"
+ln -sf "$REPO_DIR/bin/jump-top.sh" "$CLAUDE_HOOKS_DIR/jump-top.sh"
+ln -sf "$REPO_DIR/bin/status-badge.sh" "$CLAUDE_HOOKS_DIR/status-badge.sh"
 
 echo "==> updating $SETTINGS_FILE"
 python3 - "$SETTINGS_FILE" <<'PYEOF'
@@ -80,4 +82,12 @@ cat <<'EOF'
 
 如果 Claude Code 会话已经在跑，需要在里面执行一次 /hooks 让新 hook 生效
 （已存在的会话不会自动感知刚写入的 settings.json）。
+
+可选：不打开 picker，直接跳到最需要处理的 pane（bind 到比如 prefix+W）：
+
+    bind W run-shell '~/.claude/hooks/jump-top.sh'
+
+可选：在 tmux 状态栏里常驻显示未处理数量（把这段拼进你的 status-right）：
+
+    #(~/.claude/hooks/status-badge.sh)
 EOF

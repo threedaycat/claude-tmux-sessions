@@ -122,6 +122,22 @@ Reload with `tmux source-file ~/.tmux.conf`, then in any already-running
 Claude Code session run `/hooks` once so it picks up the new config
 (freshly started sessions pick it up automatically).
 
+Two more optional bindings, for when you don't want to open the picker at
+all — a macOS notification needs you to notice and click it, which isn't
+always where your attention is:
+
+```tmux
+# jump straight to whichever tracked pane needs you most, no UI
+bind W run-shell '~/.claude/hooks/jump-top.sh'
+```
+
+```tmux
+# ambient status-bar segment (🔴 blocked  ✅ done-unread  ⏳ idle),
+# visible in every session's status line without opening anything —
+# splice this into your status-right
+#(~/.claude/hooks/status-badge.sh)
+```
+
 ## Use
 
 Press `prefix + g` (or whatever key you bound) anywhere in tmux:

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Jump straight to the single highest-priority tracked pane (blocked >
+# idle > done-unread > running > read) — no picker UI at all. Bound to a
+# tmux key for "just take me to whatever needs me most".
+set -euo pipefail
+
+STATUS_FILE="$HOME/.claude/tmux-claude-status.json"
+
+if [ ! -s "$STATUS_FILE" ]; then
+  tmux display-message "没有追踪到任何 Claude Code pane"
+  exit 0
+fi
+
+pane_id=$(python3 - "$STATUS_FILE" <<'PYEOF'
+import json, sys, subprocess
+
+status_file = sys.argv[1]
+with open(status_file) as f:
+    data = json.load(f)
+
+try:
+    out = subprocess.check_output(["tmux", "list-panes", "-a", "-F", "#{pane_id}"], text=True)
+except Exception:
+    out = ""
+live = set(out.split())
+
+def rank_of(status, read):
+    if status == "blocked":
+        return -1
+    if status == "input":
+        return 0
+    if status == "done" and read:
+        return 3
+    if status == "done":
+        return 1
+    return 2
+
+best = None
+best_key = None
+for pane, e in data.items():
+    if pane not in live or e.get("archived"):
+        continue
+    key = (rank_of(e.get("status", "running"), e.get("read")), -e.get("updated_at", 0))
+    if best_key is None or key < best_key:
+        best_key = key
+        best = pane
+
+print(best or "")
+PYEOF
+)
+
+if [ -z "$pane_id" ]; then
+  tmux display-message "没有需要处理的 pane"
+  exit 0
+fi
+
+session=$(tmux display-message -p -t "$pane_id" '#{session_name}' 2>/dev/null || true)
+if [ -z "$session" ]; then
+  tmux display-message "pane 已经不存在了 ($pane_id)"
+  exit 0
+fi
+
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 "$BIN_DIR/../hooks/tmux_status_update.py" mark-read "$pane_id" 2>/dev/null || true
+
+tmux switch-client -t "$session"
+tmux select-window -t "$pane_id"
+tmux select-pane -t "$pane_id"
