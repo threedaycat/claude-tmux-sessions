@@ -104,7 +104,13 @@ for s in sessions_sorted:
     d_read = sum(1 for key, *_ in entries if key[0] == 3)
     sid = session_order.get(s)
     sid_label = f"${sid} " if sid is not None else ""
-    header = pad(f"▾ {sid_label}{s}", 22) + f"🔴{blocked}  ⏳{idle}  ✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
+    # Bold cyan headers vs plain, deeper-indented pane rows: the two row
+    # kinds have to read apart instantly, since either can hold the
+    # cursor depending on the left/right mode.
+    header = (
+        "\033[1;36m" + pad(f"▾ {sid_label}{s}", 22) + "\033[0m"
+        + f"🔴{blocked}  ⏳{idle}  ✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
+    )
     print(f"{header}\t\t{s}")
 
     # Pane rows are indented deeper than headers on purpose: with the
@@ -115,12 +121,12 @@ for s in sessions_sorted:
     # after it.
     for _key, pane, label, age, wname, cwd in entries:
         display = (
-            "    "
+            "      "
             + pad(wname, 26)
             + label
             + "  "
             + pad(f"{age}s前", 8)
-            + cwd
+            + "\033[2m" + cwd + "\033[0m"
         )
         print(f"{display}\t{pane}\t{s}")
 PYEOF
