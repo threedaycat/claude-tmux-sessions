@@ -7,11 +7,15 @@ Modes:
   running / done   called by hooks (UserPromptSubmit / Stop) for the pane
                     they're running in ($TMUX_PANE); overwrites the entry,
                     which naturally clears any stale "read" flag.
-  blocked          called by the Notification hook — Claude is waiting on
-                    a permission decision or a question only the user can
-                    answer. Highest-priority status, and also fires a
-                    macOS notification since this is actively blocking
-                    Claude's progress, not just "done and idle".
+  notify           called by the Notification hook. Branches on the
+                    hook's own "notification_type" field:
+                      permission_prompt -> "blocked" (top priority, and
+                        fires a macOS notification — Claude's progress is
+                        actually stalled on a decision only the user can
+                        make)
+                      idle_prompt / anything else -> "input" (Claude
+                        finished and is just waiting on the next message —
+                        worth a glance, not urgent, no notification)
   mark-read <pane>  called by claude-tmux-picker.sh right after it jumps to
                     <pane>, so a "done" pane the user has actually visited
                     once shows as already-seen instead of unread.
@@ -82,16 +86,10 @@ def notify_blocked(session_name, window_name, message):
         pass
 
 
-def record_status(status):
+def record_status(status, stdin_data):
     pane = os.environ.get("TMUX_PANE")
     if not pane:
         return  # not running inside tmux, nothing to track
-
-    stdin_data = {}
-    try:
-        stdin_data = json.load(sys.stdin)
-    except Exception:
-        pass
 
     info = tmux_display(pane)
     if info is None:
@@ -116,6 +114,21 @@ def record_status(status):
         notify_blocked(session_name, window_name, stdin_data.get("message"))
 
 
+def record_notification():
+    stdin_data = {}
+    try:
+        stdin_data = json.load(sys.stdin)
+    except Exception:
+        pass
+
+    # permission_prompt: Claude is stuck waiting for an approve/deny choice
+    # — actually blocks progress. idle_prompt (or anything unrecognized):
+    # Claude's done and just waiting on the next message — worth noticing,
+    # not urgent.
+    status = "blocked" if stdin_data.get("notification_type") == "permission_prompt" else "input"
+    record_status(status, stdin_data)
+
+
 def mark_read(pane):
     def apply(data):
         if pane in data:
@@ -137,8 +150,15 @@ def main():
         return
     mode = sys.argv[1]
 
-    if mode in ("running", "done", "blocked"):
-        record_status(mode)
+    if mode in ("running", "done"):
+        stdin_data = {}
+        try:
+            stdin_data = json.load(sys.stdin)
+        except Exception:
+            pass
+        record_status(mode, stdin_data)
+    elif mode == "notify":
+        record_notification()
     elif mode == "mark-read" and len(sys.argv) == 3:
         mark_read(sys.argv[2])
     elif mode == "mark-archived" and len(sys.argv) == 3:

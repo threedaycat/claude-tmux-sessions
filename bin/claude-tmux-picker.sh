@@ -35,9 +35,12 @@ fi
 # (the pane you were actually on when you pressed the key), and that pane
 # is itself tracked, start there instead — you want to land on "where I
 # am", not always on whatever's most urgent.
+echo "$(date '+%H:%M:%S') CALLER_PANE=[${CALLER_PANE:-<unset>}]" >> /tmp/claude-tmux-picker-debug.log
+
 LOAD_BIND="load:transform:$BIN_DIR/skip-header.sh 0 init"
 if [ -n "${CALLER_PANE:-}" ]; then
   CALLER_POS=$(printf '%s\n' "$rows" | awk -F'\t' -v p="$CALLER_PANE" '$2==p { print NR; exit }')
+  echo "$(date '+%H:%M:%S') CALLER_POS=[${CALLER_POS:-<no match>}]" >> /tmp/claude-tmux-picker-debug.log
   [ -n "$CALLER_POS" ] && LOAD_BIND="load:pos($CALLER_POS)"
 fi
 

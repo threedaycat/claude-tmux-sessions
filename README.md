@@ -4,14 +4,15 @@ Run multiple [Claude Code](https://claude.com/claude-code) sessions across
 tmux windows, and jump straight to the one that just finished — without
 tabbing through windows one by one.
 
-Claude Code hooks record `running` / `done` / `blocked` status per tmux
-pane (plus a `read` flag once you've actually visited a done pane, like an
-inbox, and an archive flag to dismiss ones you're done with); an
-`fzf`-powered popup lists every tracked pane (grouped by session, in a
-stable order) with a live content preview, and switches you there on
-Enter. A `blocked` pane (Claude waiting on a permission decision or a
-question) also fires a macOS notification, since that's actually stalling
-progress, not just idle.
+Claude Code hooks record `running` / `done` / `blocked` / `input` status
+per tmux pane (plus a `read` flag once you've actually visited a done
+pane, like an inbox, and an archive flag to dismiss ones you're done
+with); an `fzf`-powered popup lists every tracked pane (grouped by
+session, in a stable order) with a live content preview, and switches you
+there on Enter. Only `blocked` (Claude needs an explicit permission
+approve/deny) fires a macOS notification — that's the one status that
+actually stalls progress; `input` (Claude's just idle, waiting on your
+next message) shows up in the list but doesn't interrupt you.
 
 ## Why
 
@@ -25,25 +26,33 @@ you a one-key picker to jump to it.
 - A `UserPromptSubmit` hook marks the current pane `running`.
 - A `Stop` hook marks it `done` (Claude finished its turn and is waiting on
   you).
-- A `Notification` hook marks it `blocked` (Claude needs a permission
-  decision or an answer only you can give) and fires a macOS notification
-  via `osascript` — this is the one status that actively stalls Claude's
-  progress, so it also interrupts you outside the picker, not just inside
-  it.
-- All three overwrite the pane's whole entry, so a fresh
-  `running`/`done`/`blocked` always starts unread and unarchived again.
+- A `Notification` hook calls `tmux_status_update.py notify`, which reads
+  the hook's own `notification_type` field to decide between two very
+  different situations Claude Code lumps into one event:
+  - `permission_prompt` → `blocked` — Claude is stuck waiting on an
+    explicit approve/deny choice, which actually stalls its progress. This
+    is the only status that also fires a macOS notification (`osascript`),
+    since you might not have the picker open at all.
+  - anything else (`idle_prompt`, unrecognized) → `input` — Claude's done
+    and just waiting on your next message. Worth a glance, not urgent, no
+    notification.
+- All four statuses overwrite the pane's whole entry, so a fresh
+  `running`/`done`/`blocked`/`input` always starts unread and unarchived
+  again.
 - They write to `~/.claude/tmux-claude-status.json`, keyed by tmux pane id
   (`$TMUX_PANE`). Sessions running outside tmux are silently ignored.
 - `bin/list-rows.sh` reads that file, cross-checks against
   `tmux list-panes -a` (so closed panes disappear automatically), and
-  builds one `fzf` list with a header row per session (name + blocked/done/
-  running/read counts) followed by its panes: `WAIT` (bold red, top
-  priority — Claude needs you), `DONE` (bold green, finished and unseen),
-  `RUN` (yellow, still working), or `READ` (blue, finished and you've
-  already jumped to it once) — age, window, cwd, CJK-width-aware padded so
-  columns line up. Sessions are ordered by tmux's own `session_id`
-  (creation order — the same stable order tmux itself uses), not by
-  urgency, so the list doesn't reshuffle every time something finishes.
+  builds one `fzf` list with a header row per session (session's tmux
+  `$id`, name, and blocked/idle/done/running/read counts) followed by its
+  panes: `WAIT` (bold red, top priority — Claude needs a decision), `IDLE`
+  (magenta — Claude's waiting on you but not blocked), `DONE` (bold green,
+  finished and unseen), `RUN` (yellow, still working), or `READ` (blue,
+  finished and you've already jumped to it once) — age, window, cwd,
+  CJK-width-aware padded so columns line up. Sessions are ordered by
+  tmux's own `session_id` (creation order — the same stable order tmux
+  itself uses, and the same `$N` shown in the header), not by urgency, so
+  the list doesn't reshuffle every time something finishes.
 - `bin/claude-tmux-picker.sh` runs that as the `fzf` source. The session
   header is visual grouping only: `bin/skip-header.sh`, wired up via
   `--bind up/down/load:transform:...` and fzf's `pos()` action, makes
@@ -54,10 +63,10 @@ you a one-key picker to jump to it.
   behavior above means it naturally goes back to unread `DONE` the next
   time that pane actually finishes something new.
 - `ctrl-x` archives the highlighted pane (`mark-archived`) and reloads the
-  list in place via fzf's `reload()` — for a `DONE`/`READ` pane you've
-  decided needs no more attention and want out of your sight. It comes
-  back automatically the next time that pane goes running/done/blocked
-  again.
+  list in place via fzf's `reload()` — for a pane you've decided needs no
+  more attention and want out of your sight. It comes back automatically
+  the next time that pane's status changes again (running/done/blocked/
+  input).
 - Moving the selection instantly re-runs `tmux capture-pane -S -200` on the
   highlighted pane in the right-hand preview, scrolled to the bottom
   (`follow`) so you always see the most recent output, not the oldest line
@@ -92,13 +101,15 @@ leaves to you, since tmux configs vary. In `~/.tmux.conf` (or
 `~/.tmux.conf.local` if you use [gpakosz/.tmux](https://github.com/gpakosz/.tmux)):
 
 ```tmux
-bind g display-popup -w 95% -h 85% -e "CALLER_PANE=#{pane_id}" -E "~/.claude/hooks/claude-tmux-picker.sh"
+bind g display-popup -w 95% -h 85% -E "CALLER_PANE=#{pane_id} ~/.claude/hooks/claude-tmux-picker.sh"
 ```
 
-The `-e "CALLER_PANE=#{pane_id}"` part is what makes the picker default its
+The `CALLER_PANE=#{pane_id}` prefix is what makes the picker default its
 cursor to the pane you're currently on instead of the top of the list —
 `#{pane_id}` is expanded at key-press time (before the popup's own pane
-exists), so it's the pane you were actually on.
+exists), so it's the pane you were actually on. It's embedded directly in
+the shell-command string (rather than passed via `-e`) since that's the
+argument tmux is documented to format-expand.
 
 Reload with `tmux source-file ~/.tmux.conf`, then in any already-running
 Claude Code session run `/hooks` once so it picks up the new config
@@ -109,10 +120,11 @@ Claude Code session run `/hooks` once so it picks up the new config
 Press `prefix + g` (or whatever key you bound) anywhere in tmux:
 
 ```
-▾ news                      🔴0  ✅1  🏃1  👀0
+▾ $1 news                   🔴0  ⏳1  ✅1  🏃1  👀0
   DONE  57s前   prototype-redesign      /Users/you/repos/frontend
+  IDLE  90s前   backend-notes           /Users/you/repos/backend
   RUN   82s前   write-readme            /Users/you/repos/backend
-▾ fun                       🔴1  ✅0  🏃0  👀1
+▾ $2 fun                    🔴1  ⏳0  ✅0  🏃0  👀1
   WAIT  12s前   tmux-picker             /Users/you
   READ  331s前  claude                  /Users/you
 ```

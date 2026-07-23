@@ -70,13 +70,15 @@ for pane, e in data.items():
     age = int(now - e.get("updated_at", now))
     status = e.get("status", "running")
     if status == "blocked":
-        label, rank = "\033[1;31mWAIT\033[0m", -1  # blocked on you — top priority
+        label, rank = "\033[1;31mWAIT\033[0m", -1   # permission choice — top priority, notified
+    elif status == "input":
+        label, rank = "\033[35mIDLE\033[0m", 0      # idle, waiting on your next message
     elif status == "done" and e.get("read"):
-        label, rank = "\033[34mREAD\033[0m", 2      # done, already visited once
+        label, rank = "\033[34mREAD\033[0m", 3      # done, already visited once
     elif status == "done":
-        label, rank = "\033[1;32mDONE\033[0m", 0    # done, not seen yet
+        label, rank = "\033[1;32mDONE\033[0m", 1    # done, not seen yet
     else:
-        label, rank = "\033[33mRUN \033[0m", 1
+        label, rank = "\033[33mRUN \033[0m", 2
     key = (rank, -e.get("updated_at", 0))
     by_session[session].append((key, pane, label, age, window_name, cwd))
 
@@ -85,10 +87,13 @@ sessions_sorted = sorted(by_session.keys(), key=lambda s: session_order.get(s, 1
 for s in sessions_sorted:
     entries = sorted(by_session[s], key=lambda x: x[0])
     blocked = sum(1 for key, *_ in entries if key[0] == -1)
-    d_unread = sum(1 for key, *_ in entries if key[0] == 0)
-    d_read = sum(1 for key, *_ in entries if key[0] == 2)
-    r = sum(1 for key, *_ in entries if key[0] == 1)
-    header = pad(f"▾ {s}", 18) + f"🔴{blocked}  ✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
+    idle = sum(1 for key, *_ in entries if key[0] == 0)
+    d_unread = sum(1 for key, *_ in entries if key[0] == 1)
+    r = sum(1 for key, *_ in entries if key[0] == 2)
+    d_read = sum(1 for key, *_ in entries if key[0] == 3)
+    sid = session_order.get(s)
+    sid_label = f"${sid} " if sid is not None else ""
+    header = pad(f"▾ {sid_label}{s}", 22) + f"🔴{blocked}  ⏳{idle}  ✅{d_unread}  \U0001f3c3{r}  \U0001f440{d_read}"
     print(f"{header}\t")
 
     for _key, pane, label, age, wname, cwd in entries:
