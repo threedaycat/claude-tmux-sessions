@@ -154,6 +154,29 @@ def transcript_info(entry):
     return model, ctx, recap, first_prompt(path)
 
 
+def fmt_age(rank, secs):
+    """Say what the elapsed time *means* for this status, in human units
+    (same logic as list-rows.sh): RUN = how long it's been running since
+    the prompt was submitted, WAIT = since the permission prompt appeared,
+    IDLE = since it started waiting on input, DONE = since it finished."""
+    secs = max(0, int(secs))
+    if secs < 60:
+        d = f"{secs}秒"
+    elif secs < 3600:
+        d = f"{secs // 60}分钟"
+    else:
+        d = f"{secs / 3600:.1f}".rstrip("0").rstrip(".") + "小时"
+    if rank == 2:
+        return f"已运行 {d}"
+    if rank == -1:
+        return f"等确认 {d}"
+    if rank == 0:
+        return f"等输入 {d}"
+    if rank == 1:
+        return f"完成 {d}前"
+    return f"{d}前"  # READ — since it last finished something
+
+
 def label_of(entry):
     status = entry.get("status", "running")
     if status == "blocked":
@@ -219,7 +242,7 @@ def main():
         first = False
 
         age = int(now - e.get("updated_at", now))
-        title = f"{label}  {BOLD}{clip(win_of[pane], width - 18)}{RESET}  {DIM}{age}s前{RESET}"
+        title = f"{label}  {BOLD}{clip(win_of[pane], width - 18)}{RESET}  {DIM}{fmt_age(_rank, age)}{RESET}"
         print(title)
 
         model, ctx, recap, task = transcript_info(e)

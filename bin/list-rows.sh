@@ -72,6 +72,31 @@ def pad(s, width):
     return s if w >= width else s + " " * (width - w)
 
 
+def fmt_age(rank, secs):
+    """Say what the elapsed time *means* for this status, in human units —
+    a bare '1098s前' answers neither question. updated_at is the moment
+    the status last changed, so per status it reads naturally as:
+    RUN = since the prompt was submitted (how long it's been running),
+    WAIT = since the permission prompt appeared, IDLE = since it started
+    waiting on input, DONE = since it finished."""
+    secs = max(0, int(secs))
+    if secs < 60:
+        d = f"{secs}秒"
+    elif secs < 3600:
+        d = f"{secs // 60}分钟"
+    else:
+        d = f"{secs / 3600:.1f}".rstrip("0").rstrip(".") + "小时"
+    if rank == 2:
+        return f"已运行 {d}"
+    if rank == -1:
+        return f"等确认 {d}"
+    if rank == 0:
+        return f"等输入 {d}"
+    if rank == 1:
+        return f"完成 {d}前"
+    return f"{d}前"  # READ — since it last finished something
+
+
 now = time.time()
 by_session = defaultdict(list)
 for pane, e in data.items():
@@ -136,7 +161,7 @@ for s in sessions_sorted:
             + label
             + "  "
             + pad(wname, 24)
-            + pad(f"{age}s前", 8)
+            + pad(fmt_age(_key[0], age), 15)
             + "\033[2m" + cwd + "\033[0m"
         )
         print(f"{display}\t{pane}\t{s}")
