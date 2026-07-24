@@ -68,8 +68,12 @@ you a one-key picker to jump to it.
   panes: `WAIT` (bold red, top priority — Claude needs a decision), `IDLE`
   (magenta — Claude's waiting on you but not blocked), `DONE` (bold green,
   finished and unseen), `RUN` (yellow, still working), or `READ` (blue,
-  done *or* idle and you've already jumped to it once) — age, window, cwd,
-  CJK-width-aware padded so columns line up. Sessions are ordered by
+  done *or* idle and you've already jumped to it once) — window, a
+  status-aware elapsed-time phrase in human units (已运行/等确认/等输入 X,
+  完成 X前 — seconds only under a minute, then minutes, then hours;
+  updated_at is the moment the status last changed, so RUN reads as "how
+  long it's been running"), cwd, CJK-width-aware padded so columns line
+  up. Sessions are ordered by
   tmux's own `session_id` (creation order — the same stable order tmux
   itself uses, and the same `$N` shown in the header), not by urgency, so
   the list doesn't reshuffle every time something finishes.
@@ -180,12 +184,12 @@ Press `prefix + g` (or whatever key you bound) anywhere in tmux:
 
 ```
 ▾ $1 news               ● 1  ● 1  ● 1
-    prototype-redesign        DONE  57s前   /Users/you/repos/frontend
-    backend-notes             IDLE  90s前   /Users/you/repos/backend
-    write-readme              RUN   82s前   /Users/you/repos/backend
+    DONE  prototype-redesign      完成 57秒前     /Users/you/repos/frontend
+    IDLE  backend-notes           等输入 2分钟    /Users/you/repos/backend
+    RUN   write-readme            已运行 1分钟    /Users/you/repos/backend
 ▾ $2 fun                ● 1  ● 1
-    tmux-picker               WAIT  12s前   /Users/you
-    claude                    READ  331s前  /Users/you
+    WAIT  tmux-picker             等确认 12秒     /Users/you
+    READ  claude                  5分钟前         /Users/you
 ```
 
 The ● N counts on a session header use the same colours as the row labels
