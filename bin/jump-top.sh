@@ -32,13 +32,21 @@ except Exception:
     out = ""
 live = set(out.split())
 
-def rank_of(status, read):
+import os, time
+# Idle older than this has been abandoned — don't let "jump to what needs
+# me most" land on a stale idle over a fresh done. Matches list-rows.sh /
+# status-badge.sh. Overridable via env.
+IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
+now = time.time()
+
+
+def rank_of(status, read, age):
     if status == "blocked":
         return -1
     if status in ("done", "input") and read:
         return 3
     if status == "input":
-        return 0
+        return 4 if age >= IDLE_STALE else 0   # aged-out idle sinks below all
     if status == "done":
         return 1
     return 2
@@ -48,7 +56,8 @@ best_key = None
 for pane, e in data.items():
     if pane not in live or e.get("archived"):
         continue
-    key = (rank_of(e.get("status", "running"), e.get("read")), -e.get("updated_at", 0))
+    age = now - e.get("updated_at", now)
+    key = (rank_of(e.get("status", "running"), e.get("read"), age), -e.get("updated_at", 0))
     if best_key is None or key < best_key:
         best_key = key
         best = pane
