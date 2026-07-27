@@ -77,8 +77,8 @@ def fmt_age(rank, secs):
     a bare '1098s前' answers neither question. updated_at is the moment
     the status last changed, so per status it reads naturally as:
     RUN = since the prompt was submitted (how long it's been running),
-    WAIT = since the permission prompt appeared, IDLE = since it started
-    waiting on input, DONE = since it finished."""
+    WAIT = since the permission prompt appeared, DONE = since it
+    finished (both the unread DONE and the already-seen READ)."""
     secs = max(0, int(secs))
     if secs < 60:
         d = f"{secs}秒"
@@ -90,19 +90,25 @@ def fmt_age(rank, secs):
         return f"已运行 {d}"
     if rank == -1:
         return f"等确认 {d}"
-    if rank == 0:
-        return f"等输入 {d}"
     if rank == 1:
         return f"完成 {d}前"
     return f"{d}前"  # READ — since it last finished something
 
 
-# Idle panes older than this have clearly been abandoned — Claude finished
-# ages ago and you never came back. They stay listed (still reachable) but
-# dimmed and sunk to the bottom (rank 4), and drop out of the ambient
-# status bar entirely. Overridable via env.
+# An unread DONE left untouched this long has clearly been abandoned —
+# Claude finished ages ago and you never came back. It stays listed (still
+# reachable) but dimmed and sunk to the bottom (rank 4), and drops out of
+# the ambient status bar entirely. Overridable via env.
 IDLE_STALE = int(__import__("os").environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 
+# Four states, each with a distinct leading icon so it reads by shape, not
+# just colour: WAIT ⏸ (blocked — needs your choice, top priority), RUN ▶
+# (Claude busy), DONE ✔ (finished, unread — a result to look at), READ ✓
+# (finished, already seen — quiet). "done" (Stop hook) and "input" (idle,
+# waiting on your next message) both just mean "Claude finished, waiting on
+# you", so they collapse into the single DONE/READ pair. ︎ forces the
+# text (narrow, monochrome) presentation of the two media glyphs so they
+# stay single-width in the aligned list and take our colour.
 now = time.time()
 by_session = defaultdict(list)
 for pane, e in data.items():
@@ -112,17 +118,15 @@ for pane, e in data.items():
     age = int(now - e.get("updated_at", now))
     status = e.get("status", "running")
     if status == "blocked":
-        label, rank = "\033[1;31mWAIT\033[0m", -1   # permission choice — top priority, notified
+        label, rank = "\033[1;31m⏸︎ WAIT\033[0m", -1   # permission choice — top priority, notified
     elif status in ("done", "input") and e.get("read"):
-        label, rank = "\033[34mREAD\033[0m", 3      # already visited once — quiet until it stirs again
-    elif status == "input" and age >= IDLE_STALE:
-        label, rank = "\033[2mIDLE\033[0m", 4       # aged-out idle — dimmed (still in tmux order)
-    elif status == "input":
-        label, rank = "\033[35mIDLE\033[0m", 0      # idle, waiting on your next message
-    elif status == "done":
-        label, rank = "\033[1;32mDONE\033[0m", 1    # done, not seen yet
+        label, rank = "\033[34m✓︎ READ\033[0m", 3          # already visited once — quiet until it stirs again
+    elif status in ("done", "input") and age >= IDLE_STALE:
+        label, rank = None, 4                                    # aged-out unread DONE — dimmed (built in render)
+    elif status in ("done", "input"):
+        label, rank = "\033[1;32m✔︎ DONE\033[0m", 1         # finished, not seen yet
     else:
-        label, rank = "\033[33mRUN \033[0m", 2
+        label, rank = "\033[33m▶︎ RUN \033[0m", 2
     # Rows sort by tmux's own window.pane index (not status priority), so
     # the picker mirrors the order you see in tmux itself — predictable,
     # and it lines up with the digit-jump numbers. `rank` is kept only for
@@ -139,7 +143,6 @@ row_num = 0  # global 1-based pane-row counter (the digit-jump number)
 for s in sessions_sorted:
     entries = sorted(by_session[s], key=lambda x: x[0])   # by tmux window.pane
     blocked = sum(1 for _seq, rank, *_ in entries if rank == -1)
-    idle = sum(1 for _seq, rank, *_ in entries if rank == 0)
     d_unread = sum(1 for _seq, rank, *_ in entries if rank == 1)
     r = sum(1 for _seq, rank, *_ in entries if rank == 2)
     d_read = sum(1 for _seq, rank, *_ in entries if rank == 3)
@@ -149,15 +152,16 @@ for s in sessions_sorted:
     # Bold cyan headers vs plain, deeper-indented pane rows: the two row
     # kinds have to read apart instantly, since either can hold the
     # cursor depending on the left/right mode.
-    # Counts as ●N dots in the exact colours of the row labels below
-    # (red=WAIT, magenta=IDLE, green=DONE, yellow=RUN, blue=READ) — one
-    # glyph, colour carries the meaning, and zero counts are simply
-    # omitted instead of parading a row of 0s.
+    # Counts carry the same icon+colour as the row labels below, so the
+    # header summarises the session in the very glyphs you'll then scan for
+    # (⏸ WAIT, ✔ DONE-unread, ▶ RUN, ✓ READ, dim ✔ = aged-out DONE) —
+    # ordered most-important-first, and zero counts are simply omitted
+    # instead of parading a row of 0s.
     counts = "  ".join(
-        f"\033[{colour}m● {n}\033[0m"
-        for colour, n in (
-            ("1;31", blocked), ("35", idle), ("1;32", d_unread),
-            ("33", r), ("34", d_read), ("2", stale),
+        f"\033[{colour}m{icon} {n}\033[0m"
+        for icon, colour, n in (
+            ("⏸︎", "1;31", blocked), ("✔︎", "1;32", d_unread),
+            ("▶︎", "33", r), ("✓︎", "34", d_read), ("✔︎", "2", stale),
         )
         if n
     )
@@ -180,10 +184,11 @@ for s in sessions_sorted:
         # Nth-pane-row count skip-header.sh uses for pos()+accept.
         num = f"  \033[2m{row_num:>2}\033[0m  "
         if rank == 4:
-            # Aged-out idle: build the row from plain text and dim the
-            # whole thing in one wrap (no embedded colour codes that would
-            # reset the dim early), so it recedes but stays selectable.
-            body = "IDLE  " + pad(wname, 24) + pad(fmt_age(0, age), 15) + cwd
+            # Aged-out unread DONE: build the row from plain text and dim
+            # the whole thing in one wrap (no embedded colour codes that
+            # would reset the dim early), so it recedes but stays
+            # selectable. "✔ DONE  " matches the icon+label width above.
+            body = "✔︎ DONE  " + pad(wname, 24) + pad(fmt_age(1, age), 15) + cwd
             display = f"  \033[2m{row_num:>2}  " + body + "\033[0m"
         else:
             display = (
