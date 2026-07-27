@@ -114,9 +114,12 @@ def first_prompt(path):
     return None
 
 
-def transcript_info(entry):
+def transcript_info(entry, want_text=True):
     """(model, context_tokens, recap_text, task) from the pane's
-    transcript, or all-None if it can't be found/parsed."""
+    transcript, or all-None if it can't be found/parsed. want_text=False
+    is the cheap path for the one-line pane bar: a small tail read, stop
+    at the first usage-bearing message, skip recap/first-prompt entirely
+    (~10x less I/O — the preview runs on every cursor stop)."""
     sid, cwd = entry.get("session_id"), entry.get("cwd")
     if not sid or not cwd:
         return None, None, None, None
@@ -125,7 +128,7 @@ def transcript_info(entry):
         with open(path, "rb") as f:
             f.seek(0, 2)
             size = f.tell()
-            f.seek(max(0, size - 400_000))
+            f.seek(max(0, size - (400_000 if want_text else 80_000)))
             lines = f.read().decode("utf-8", "replace").splitlines()
     except OSError:
         return None, None, None, None
@@ -147,11 +150,15 @@ def transcript_info(entry):
                 + (u.get("cache_read_input_tokens") or 0)
                 + (u.get("cache_creation_input_tokens") or 0)
             ) or None
+        if not want_text:
+            if model is not None:
+                break
+            continue
         texts = [c.get("text", "") for c in m.get("content", []) if c.get("type") == "text"]
         if texts and texts[-1].strip():
             recap = texts[-1].strip()
             break
-    return model, ctx, recap, first_prompt(path)
+    return model, ctx, recap, first_prompt(path) if want_text else None
 
 
 def fmt_age(rank, secs):
@@ -190,7 +197,61 @@ def label_of(entry):
     return "\033[33mRUN \033[0m", 2
 
 
+def ctx_bar(model, ctx, cells=10):
+    """Claude-Code-statusline-style context meter: ▓▓▓▓░░░░░░ 47% (93k),
+    plus a red ⚠ /compact once ≥80% of the window is used. 200k window
+    unless the model id carries the [1m] long-context marker."""
+    if not ctx:
+        return None
+    limit = 1_000_000 if "[1m]" in (model or "") else 200_000
+    frac = min(1.0, ctx / limit)
+    fill = round(frac * cells)
+    s = (
+        "▓" * fill + DIM + "░" * (cells - fill) + RESET
+        + f" {frac * 100:.0f}% ({ctx // 1000}k)"
+    )
+    if frac >= 0.8:
+        s += " \033[31m⚠ /compact\033[0m"
+    return s
+
+
+def pane_bar(pane):
+    """--pane mode: one Claude-Code-statusline-style line for a single
+    tracked pane, printed above the live screen dump in the pane preview
+    — status · model · context size (± % of 200k) · status-aware elapsed
+    time · cwd, then a dim rule."""
+    try:
+        with open(STATUS_FILE) as f:
+            data = json.load(f)
+    except Exception:
+        return
+    e = data.get(pane)
+    if not e:
+        return
+
+    label, rank = label_of(e)
+    age = int(time.time() - e.get("updated_at", time.time()))
+    model, ctx, _recap, _task = transcript_info(e, want_text=False)
+
+    bits = []
+    if model:
+        bits.append(model.replace("claude-", ""))
+    cb = ctx_bar(model, ctx)
+    if cb:
+        bits.append(cb)
+    bits.append(fmt_age(rank, age))
+
+    width = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
+    cwd = e.get("cwd") or ""
+    line = f"{label}  " + " · ".join(bits) + f"  {DIM}{clip(cwd, width)}{RESET}"
+    print(line)
+    print(DIM + "─" * width + RESET)
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--pane":
+        pane_bar(sys.argv[2])
+        return
     if len(sys.argv) != 2:
         return
     session = sys.argv[1]
@@ -251,13 +312,15 @@ def main():
         if task:
             print("\033[36m❯\033[0m " + clip(task, width - 2))
 
-        meta = []
-        if model:
-            meta.append(model.replace("claude-", ""))
-        if ctx:
-            meta.append(f"ctx {ctx / 1000:.0f}k")
-        meta.append(e.get("cwd") or "")
-        print(DIM + clip(" · ".join(m for m in meta if m), width) + RESET)
+        # Model + context meter in normal intensity (the meter is the
+        # single most triage-relevant number), cwd dimmed after them.
+        left = " ".join(
+            x for x in (model.replace("claude-", "") if model else None,
+                        ctx_bar(model, ctx)) if x
+        )
+        cwd_room = max(10, width - 36)
+        cwd = clip(e.get("cwd") or "", cwd_room)
+        print((left + "  " if left else "") + DIM + cwd + RESET)
 
         if recap:
             for ln in wrap(recap, width - 2, recap_lines):

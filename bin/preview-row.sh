@@ -12,16 +12,20 @@ set -euo pipefail
 pane="${1:-}"
 session="${2:-}"
 
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+[ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
 if [ -n "$pane" ]; then
+  # Claude-Code-statusline-style bar on top (status · model · ctx ·
+  # elapsed · cwd) — the raw screen dump alone doesn't tell you the
+  # things you actually triage by.
+  python3 "$BIN_DIR/session-digest.py" --pane "$pane" 2>/dev/null || true
   tmux capture-pane -p -e -S -200 -t "$pane" 2>&1 || echo "(pane 已关闭或无法读取)"
   exit 0
 fi
 
 [ -n "$session" ] || exit 0
-
-SCRIPT_PATH="${BASH_SOURCE[0]}"
-[ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
-BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 digest="$(python3 "$BIN_DIR/session-digest.py" "$session" 2>/dev/null || true)"
 

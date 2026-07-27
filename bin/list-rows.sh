@@ -97,36 +97,53 @@ def fmt_age(rank, secs):
     return f"{d}前"  # READ — since it last finished something
 
 
+# Idle panes older than this have clearly been abandoned — Claude finished
+# ages ago and you never came back. They stay listed (still reachable) but
+# dimmed and sunk to the bottom (rank 4), and drop out of the ambient
+# status bar entirely. Overridable via env.
+IDLE_STALE = int(__import__("os").environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
+
 now = time.time()
 by_session = defaultdict(list)
 for pane, e in data.items():
     if pane not in live or e.get("archived"):
         continue
-    _, session, _win_idx, window_name, _pane_idx, cwd = live[pane]
+    _, session, win_idx, window_name, pane_idx, cwd = live[pane]
     age = int(now - e.get("updated_at", now))
     status = e.get("status", "running")
     if status == "blocked":
         label, rank = "\033[1;31mWAIT\033[0m", -1   # permission choice — top priority, notified
     elif status in ("done", "input") and e.get("read"):
         label, rank = "\033[34mREAD\033[0m", 3      # already visited once — quiet until it stirs again
+    elif status == "input" and age >= IDLE_STALE:
+        label, rank = "\033[2mIDLE\033[0m", 4       # aged-out idle — dimmed (still in tmux order)
     elif status == "input":
         label, rank = "\033[35mIDLE\033[0m", 0      # idle, waiting on your next message
     elif status == "done":
         label, rank = "\033[1;32mDONE\033[0m", 1    # done, not seen yet
     else:
         label, rank = "\033[33mRUN \033[0m", 2
-    key = (rank, -e.get("updated_at", 0))
-    by_session[session].append((key, pane, label, age, window_name, cwd))
+    # Rows sort by tmux's own window.pane index (not status priority), so
+    # the picker mirrors the order you see in tmux itself — predictable,
+    # and it lines up with the digit-jump numbers. `rank` is kept only for
+    # the label colour and the header count dots.
+    try:
+        seq = (int(win_idx), int(pane_idx))
+    except ValueError:
+        seq = (1 << 30, 1 << 30)
+    by_session[session].append((seq, rank, pane, label, age, window_name, cwd))
 
 sessions_sorted = sorted(by_session.keys(), key=lambda s: session_order.get(s, 1 << 30))
 
+row_num = 0  # global 1-based pane-row counter (the digit-jump number)
 for s in sessions_sorted:
-    entries = sorted(by_session[s], key=lambda x: x[0])
-    blocked = sum(1 for key, *_ in entries if key[0] == -1)
-    idle = sum(1 for key, *_ in entries if key[0] == 0)
-    d_unread = sum(1 for key, *_ in entries if key[0] == 1)
-    r = sum(1 for key, *_ in entries if key[0] == 2)
-    d_read = sum(1 for key, *_ in entries if key[0] == 3)
+    entries = sorted(by_session[s], key=lambda x: x[0])   # by tmux window.pane
+    blocked = sum(1 for _seq, rank, *_ in entries if rank == -1)
+    idle = sum(1 for _seq, rank, *_ in entries if rank == 0)
+    d_unread = sum(1 for _seq, rank, *_ in entries if rank == 1)
+    r = sum(1 for _seq, rank, *_ in entries if rank == 2)
+    d_read = sum(1 for _seq, rank, *_ in entries if rank == 3)
+    stale = sum(1 for _seq, rank, *_ in entries if rank == 4)
     sid = session_order.get(s)
     sid_label = f"${sid} " if sid is not None else ""
     # Bold cyan headers vs plain, deeper-indented pane rows: the two row
@@ -140,7 +157,7 @@ for s in sessions_sorted:
         f"\033[{colour}m● {n}\033[0m"
         for colour, n in (
             ("1;31", blocked), ("35", idle), ("1;32", d_unread),
-            ("33", r), ("34", d_read),
+            ("33", r), ("34", d_read), ("2", stale),
         )
         if n
     )
@@ -155,14 +172,27 @@ for s in sessions_sorted:
     # legible at a glance. Window name leads the row — "what is this one
     # doing" is the first thing you scan for — with the status right
     # after it.
-    for _key, pane, label, age, wname, cwd in entries:
-        display = (
-            "      "
-            + label
-            + "  "
-            + pad(wname, 24)
-            + pad(fmt_age(_key[0], age), 15)
-            + "\033[2m" + cwd + "\033[0m"
-        )
+    for _seq, rank, pane, label, age, wname, cwd in entries:
+        row_num += 1
+        # Dim number gutter (6 visible cols, same indent pane rows always
+        # had) — the digit you press to jump straight here (1-9; press / to
+        # search for the rest). Global top-to-bottom, so it matches the
+        # Nth-pane-row count skip-header.sh uses for pos()+accept.
+        num = f"  \033[2m{row_num:>2}\033[0m  "
+        if rank == 4:
+            # Aged-out idle: build the row from plain text and dim the
+            # whole thing in one wrap (no embedded colour codes that would
+            # reset the dim early), so it recedes but stays selectable.
+            body = "IDLE  " + pad(wname, 24) + pad(fmt_age(0, age), 15) + cwd
+            display = f"  \033[2m{row_num:>2}  " + body + "\033[0m"
+        else:
+            display = (
+                num
+                + label
+                + "  "
+                + pad(wname, 24)
+                + pad(fmt_age(rank, age), 15)
+                + "\033[2m" + cwd + "\033[0m"
+            )
         print(f"{display}\t{pane}\t{s}")
 PYEOF

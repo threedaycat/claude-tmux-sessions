@@ -45,10 +45,27 @@ fi
 MODE_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-mode.XXXXXX")"
 export MODE_FILE
 printf 'pane' > "$MODE_FILE"
-trap 'rm -f "$MODE_FILE"' EXIT
 
-fzf_args=(--ansi --delimiter=$'\t' --with-nth=1
-  --header='↑↓ 选 Claude 窗口 · ← 切成选 session · Enter 跳转 · ctrl-x 归档 · Esc 取消'
+# Row cache shared with skip-header.sh: its transform runs on EVERY
+# arrow keypress, and re-running list-rows.sh there (prune + two
+# pythons + several tmux round-trips, ~100ms unloaded) made held-down
+# cursor movement queue up and lag by seconds under load. Row positions
+# only change when the list itself is (re)loaded, so write the rows once
+# here and refresh via tee on the ctrl-x reload; keypresses just read.
+ROWS_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-rows.XXXXXX")"
+export ROWS_FILE
+printf '%s\n' "$rows" > "$ROWS_FILE"
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE"' EXIT
+
+# Starts with search disabled AND the input line hidden (--disabled
+# --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
+# instead of piling up in a dead query display (--disabled alone still
+# shows and fills the input line). / shows the input and enables search
+# (letters then type normally, Esc hides it and drops back to
+# navigation) — all dispatched through skip-header.sh, which branches on
+# FZF_INPUT_STATE (hidden in navigation, enabled while searching).
+fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
+  --header='j/k 选窗口 · 1-9 直跳 · h 选 session · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3}"
   --preview-window='right,60%,border-left,wrap,follow'
@@ -57,7 +74,23 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1
   --bind "up:transform:$BIN_DIR/skip-header.sh {n} up"
   --bind "left:transform:$BIN_DIR/skip-header.sh {n} left"
   --bind "right:transform:$BIN_DIR/skip-header.sh {n} right"
-  --bind "ctrl-x:execute-silent(python3 '$STATUS_UPDATER' mark-archived {2})+reload($BIN_DIR/list-rows.sh)")
+  --bind "j:transform:$BIN_DIR/skip-header.sh {n} down j"
+  --bind "k:transform:$BIN_DIR/skip-header.sh {n} up k"
+  --bind "h:transform:$BIN_DIR/skip-header.sh {n} left h"
+  --bind "l:transform:$BIN_DIR/skip-header.sh {n} right l"
+  --bind "/:transform:$BIN_DIR/skip-header.sh {n} slash /"
+  --bind "q:transform:$BIN_DIR/skip-header.sh {n} quit q"
+  --bind "esc:transform:$BIN_DIR/skip-header.sh {n} esc"
+  --bind "ctrl-x:execute-silent(python3 '$STATUS_UPDATER' mark-archived {2})+reload($BIN_DIR/list-rows.sh | tee '$ROWS_FILE')"
+  --bind "start:bg-transform-footer:$BIN_DIR/usage-footer.sh")
+
+# Digits 1-9 jump straight to that numbered pane row (the gutter number in
+# each row) and accept — the "type a number to jump" shortcut. Routed
+# through skip-header.sh so that while search is open the same keys type
+# into the query instead. Rows past 9 aren't digit-reachable; use / or j/k.
+for d in 1 2 3 4 5 6 7 8 9; do
+  fzf_args+=(--bind "$d:transform:$BIN_DIR/skip-header.sh {n} digit $d")
+done
 
 LOAD_BIND="load:transform:$BIN_DIR/skip-header.sh 0 init"
 if [ -n "${CALLER_PANE:-}" ]; then

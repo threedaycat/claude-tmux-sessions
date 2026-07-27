@@ -114,6 +114,24 @@ def frontmost_app():
         return None
 
 
+def play_sound():
+    """A short audible cue when a pane goes blocked. Uses afplay on a
+    system sound directly rather than the notification's own sound —
+    afplay rings regardless of whether the terminal has macOS notification
+    permission, which the -sound path silently depends on. Best-effort,
+    backgrounded so it never delays the hook."""
+    snd = "/System/Library/Sounds/Ping.aiff"
+    if not (shutil.which("afplay") and os.path.exists(snd)):
+        return
+    try:
+        subprocess.Popen(
+            ["afplay", snd],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
 def notify_blocked(session_name, pane, window_name, message):
     """macOS notification — 'blocked' means Claude's progress is actually
     stalled on a decision only the user can make, unlike a quiet 'done'.
@@ -133,9 +151,11 @@ def notify_blocked(session_name, pane, window_name, message):
             f"tmux select-pane -t {shlex.quote(pane)}"
         )
         try:
+            # No -sound here: play_sound() handles the audible cue via
+            # afplay, which doesn't depend on notification permission.
             subprocess.run(
                 ["terminal-notifier", "-title", title, "-message", body,
-                 "-sound", "Ping", "-execute", jump],
+                 "-execute", jump],
                 check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             return
@@ -144,8 +164,8 @@ def notify_blocked(session_name, pane, window_name, message):
 
     script = (
         f'display notification {json.dumps(body)} '
-        f'with title {json.dumps(title)} sound name "Ping"'
-    )
+        f'with title {json.dumps(title)}'
+    )  # sound comes from play_sound()/afplay, not the notification
     try:
         subprocess.run(["osascript", "-e", script], check=False,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -229,6 +249,7 @@ def record_status(status, stdin_data):
         with_status_file(update_restore, path=RESTORE_FILE)
 
     if status == "blocked":
+        play_sound()
         tmux_flash(session_name, window_name, pane)
         notify_blocked(session_name, pane, window_name, stdin_data.get("message"))
 

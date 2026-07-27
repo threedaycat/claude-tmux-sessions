@@ -10,10 +10,11 @@ pane, like an inbox, and an archive flag to dismiss ones you're done
 with); an `fzf`-powered popup lists every tracked pane (grouped by
 session, in a stable order) with a live content preview, and switches you
 there on Enter. Only `blocked` (Claude needs an explicit permission
-approve/deny) fires a notification — an in-tmux status-line flash on
-every attached client plus a macOS notification — because that's the one
-status that actually stalls progress; `input` (Claude's just idle, waiting on your
-next message) shows up in the list but doesn't interrupt you.
+approve/deny) fires a notification — a **persistent** red status-line
+banner that stays until you go deal with it, a one-shot flash, a sound,
+and a macOS notification — because that's the one status that actually
+stalls progress; `input` (Claude's just idle, waiting on your next
+message) shows up in the list but doesn't interrupt you.
 
 ## Why
 
@@ -32,20 +33,34 @@ you a one-key picker to jump to it.
   different situations Claude Code lumps into one event:
   - `permission_prompt` → `blocked` — Claude is stuck waiting on an
     explicit approve/deny choice, which actually stalls its progress. This
-    is the only status that also notifies, two ways at once:
-    - **in tmux**: a status-line message (`tmux display-message -d 5000`)
-      flashed on every attached client, naming the session/window and
-      reminding you `prefix W` jumps straight there (`blocked` ranks first
-      in jump-top). Clients already looking at the notifying pane are
-      skipped — the permission prompt is on their screen. Works
-      full-screen and under Do Not Disturb, no macOS involved.
+    is the only status that also notifies, several ways at once:
+    - **persistent in-tmux banner** (the reliable one): the status-bar
+      segment (`status-badge.sh`) renders a loud white-on-red banner
+      `⚠ N 个等你确认 · prefix W 跳转` whenever any pane is blocked *and
+      unread*. Unlike a passing flash it re-renders every status refresh,
+      so it **stays put until you deal with it** — it never vanishes on
+      its own after a few seconds. You dismiss it by going there: `prefix
+      W` (or the picker) jumps to the pane and marks it read, dropping it
+      from the banner. A fresh permission prompt overwrites the entry,
+      clears `read`, and the banner (and sound) come back.
+    - **sound**: `afplay` on a system sound (`Ping.aiff`) the moment it
+      goes blocked — rings regardless of macOS notification permission,
+      unlike a notification's own `-sound`.
+    - **one-shot flash**: a `tmux display-message -d 5000` on every
+      attached client as an instant "just happened" cue, naming the
+      session/window. Clients already looking at the notifying pane are
+      skipped — the permission prompt is on their screen. (The banner is
+      what makes it reliable; this is just the immediate nudge.)
     - **on macOS**: via `terminal-notifier` if installed (so clicking it
       jumps straight to the pane) or plain `osascript` otherwise
       (informational only) — covers the case where you're in another app
       and not looking at the terminal at all.
   - anything else (`idle_prompt`, unrecognized) → `input` — Claude's done
     and just waiting on your next message. Worth a glance, not urgent, no
-    notification.
+    notification. Idle that you never come back to piles up, so idle older
+    than `CLAUDE_TMUX_IDLE_STALE_SECS` (default 2h) *ages out*: it drops
+    off the ambient status bar entirely and, in the picker, dims and sinks
+    below everything else — still reachable, just no longer nagging.
 - All four statuses overwrite the pane's whole entry, so a fresh
   `running`/`done`/`blocked`/`input` always starts unread and unarchived
   again.
@@ -76,13 +91,28 @@ you a one-key picker to jump to it.
   up. Sessions are ordered by
   tmux's own `session_id` (creation order — the same stable order tmux
   itself uses, and the same `$N` shown in the header), not by urgency, so
-  the list doesn't reshuffle every time something finishes.
+  the list doesn't reshuffle every time something finishes. Panes *within*
+  a session are ordered by their tmux `window.pane` index too — the picker
+  mirrors the order you see in tmux itself, rather than floating the most
+  urgent pane to the top. Status is still carried by the label colour, and
+  each pane row starts with a dim global number (1, 2, 3… top to bottom
+  across all sessions).
 - `bin/claude-tmux-picker.sh` runs that as the `fzf` source, with two
   cursor modes in the one list — no second screen, no overlay.
-  `bin/skip-header.sh`, wired up via `--bind up/down/left/right/load:
-  transform:...` and fzf's `pos()` action, decides what a stop is: in the
-  default pane mode arrow keys jump straight over the session headers, so
-  every stop is an actual Claude Code pane; `←` switches to session mode
+  `bin/skip-header.sh`, wired up via `--bind ...:transform:...` and
+  fzf's `pos()` action, dispatches every key: fzf starts with search
+  disabled and the input line hidden (`--disabled --no-input` — hidden,
+  not just disabled, so stray letters don't pile up in a dead query
+  display), `j`/`k` (and ↑↓) move vim-style, `q`/Esc quit, and `/` shows
+  the input and enables search — in search mode (branching on
+  `FZF_INPUT_STATE`) printable keys `put()` into the query, arrows fall
+  back to fzf's stock actions, and Esc hides the input and returns to
+  navigation. It also decides what a movement stop is: in the default
+  pane mode `j`/`k` jump straight over the session headers, so every
+  stop is an actual Claude Code pane; digits `1`-`9` jump straight to the
+  correspondingly-numbered pane row (the dim gutter number) and accept it
+  in one keypress — "type the number, land there" — while in search mode
+  those same keys type into the query instead; `h` (or `←`) switches to session mode
   (cursor snaps to the current session's header, up/down now move
   header-to-header, Enter jumps to that session's last active pane, and
   the preview becomes one compact card per tracked pane —
@@ -90,7 +120,8 @@ you a one-key picker to jump to it.
   (`~/.claude/projects/…/<session_id>.jsonl`, findable because the hooks
   record `session_id`) and shows name/status/age, a `❯` task line (the
   session's first real prompt — what this pane is working on), model +
-  current context size, and a `▎`-quoted recap of Claude's last reply,
+  the same `▓░` context meter as the pane bar, and a `▎`-quoted recap of
+  Claude's last reply,
   each card separated by a blank line and a full-width rule); `→` snaps
   back to the
   nearest pane row. Session headers are bold cyan and pane rows plain,
@@ -111,8 +142,24 @@ you a one-key picker to jump to it.
 - Moving the selection instantly re-runs `tmux capture-pane -S -200` on the
   highlighted pane in the right-hand preview, scrolled to the bottom
   (`follow`) so you always see the most recent output, not the oldest line
-  of scrollback. Enter jumps there (`switch-client` + `select-window` +
-  `select-pane`); Esc cancels.
+  of scrollback — topped by a Claude-Code-statusline-style bar
+  (`session-digest.py --pane`): status · model · a `▓░` context meter
+  (% of the 200k window — 1M for `[1m]` models — with a red `⚠ /compact`
+  once ≥80%) · the status-aware elapsed time · cwd, read via a cheap
+  80KB transcript tail so it costs ~40ms per cursor stop. Enter jumps there
+  (`switch-client` + `select-window` + `select-pane`); Esc cancels.
+- The picker's footer is a multi-line usage panel (`bin/usage-footer.sh`,
+  filled in asynchronously via fzf's `bg-transform-footer` so startup
+  isn't delayed). Top: the REAL rate-limit bars — 5h / 7d window
+  utilization % and reset times, read from `cachedUsageUtilization` in
+  `~/.claude.json`, where Claude Code caches its own `/usage` API
+  responses (no OAuth calls; a footnote says how stale the cache is).
+  Bars go yellow at 70%, red at 90%. Below: today's tokens per model as
+  share bars and the current 5h window's token count, computed live from
+  transcripts (assistant messages since local midnight, deduped by
+  message id; input + cache-write + output, cache reads excluded), plus
+  a 14-day sparkline from `stats-cache.json` (history only — that cache
+  lags on the current day).
 
 ## Requirements
 
@@ -120,10 +167,11 @@ you a one-key picker to jump to it.
 - [fzf](https://github.com/junegunn/fzf)
 - python3
 - Claude Code with hooks support
-- macOS, for the `blocked` *system* notification only — the in-tmux
-  status-line flash and everything else is plain tmux/bash/python3 and
-  should work anywhere; on other platforms the macOS notification call
-  just fails silently and the flash + `WAIT` row in the picker still work
+- macOS, for the `blocked` *system* notification and the `afplay` sound
+  only — the in-tmux banner/flash and everything else is plain
+  tmux/bash/python3 and should work anywhere; on other platforms the macOS
+  notification and sound calls just fail silently and the persistent
+  banner + `WAIT` row in the picker still work
 - optional: [terminal-notifier](https://github.com/julienXX/terminal-notifier)
   (`brew install terminal-notifier`) so clicking the `blocked` notification
   jumps straight to the pane; without it you still get a notification, just
@@ -171,10 +219,29 @@ bind W run-shell '~/.claude/hooks/jump-top.sh'
 ```
 
 ```tmux
-# ambient status-bar segment: colour-coded ● counts (red blocked,
-# green done-unread, magenta idle; zero counts omitted), visible in
-# every session's status line without opening anything —
-# splice this into your status-right
+# ambient status-bar segment, always visible in every session's status
+# line without opening anything — splice this into your status-right:
+#   - a 5-hour-quota bar `5h ▓▓▓░░░░░░░ 32% ↻20:09` (fills with how much
+#     you've *used*, same direction as Claude /usage, the picker footer
+#     and the context meters + when it resets to full), from Claude
+#     Code's own cached /usage data; the bar deepens as it fills —
+#     green (plenty) → chartreuse → gold → orange → red (nearly spent) —
+#     so how close to the cap reads off the colour alone. That cache is
+#     account-scoped and Claude Code wipes it whenever an instance on
+#     another account touches ~/.claude.json (so with claude-use l1/l2 it
+#     keeps vanishing); we mirror the last live reading to
+#     ~/.claude/tmux-quota-cache.json and fall back to it (muted grey bar +
+#     a ~ 'last known' marker) until fresh data returns, so the bar never
+#     just blinks out. A quiet `5h ░░░░░░░░░░ ?` placeholder shows only
+#     when there's no data at all (yet)
+#   - while any pane is blocked-and-unread, a persistent badge — white-on-
+#     red WAIT chip + the window's name + how long it's been waiting
+#     (names the longest-waiting one, "+N" for the rest) — that stays put
+#     until you jump there
+#   - the full picker state as colour-coded ● counts, left-to-right in
+#     priority order (most important first, so you only read the left):
+#     idle (magenta), done-unread (green), running (yellow), already-seen
+#     (blue); zero omitted
 #(~/.claude/hooks/status-badge.sh)
 ```
 
@@ -201,35 +268,40 @@ first thing you scan for — with the status right after it.
 
 The cursor starts on the pane you're currently on (if it's tracked), not
 always on whatever's most urgent — you're usually opening this because
-you want to check something nearby, not get redirected. Arrow up/down
-moves between panes only — the `▾ session` lines are skipped
-automatically, so every stop shows a real Claude Code pane and the
-right-hand preview instantly follows it, scrolled to the bottom. Enter
+you want to check something nearby, not get redirected. `j`/`k` (or
+arrow up/down) move between panes only — the `▾ session` lines are
+skipped automatically, so every stop shows a real Claude Code pane and
+the right-hand preview instantly follows it, scrolled to the bottom.
+Search is off by default so those letters never land in a query; `/`
+turns it on (type to filter, Esc returns to `j`/`k` navigation). Enter
 jumps immediately; `ctrl-x` archives (dismisses) the highlighted pane in
-place; no separate menu, no extra confirmation step for either.
+place; `q` or Esc closes; no separate menu, no extra confirmation step.
 
-`←` flips the same list into session-select mode: the cursor snaps onto
+`h` (or `←`) flips the same list into session-select mode: the cursor snaps onto
 the `▾ session` header lines instead (up/down move session-to-session),
 and the preview becomes one compact card per tracked Claude pane in that
 session:
 
 ```
-IDLE  ✳ news-run  2011s前
-opus-4-8 · ctx 49k · /Users/lsy/Zymix
-  已记下，以后严格执行：
-  - 不主动合并到生产分支……
+IDLE  ✳ news-run  等输入 33分钟
+❯ 帮我把今天的新闻抓下来整理成日报
+opus-4-8 ▓▓░░░░░░░░ 25% (49k)  /Users/lsy/Zymix
+▎ 已记下，以后严格执行：
+▎ - 不主动合并到生产分支……
 
-╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-RUN   ⠂ prototype-redesign  347s前
-fable-5 · ctx 361k · …/frontend-prototype-redesign
-  Now the logic implementation — check how …
+────────────────────────────────────
+RUN   ⠂ prototype-redesign  已运行 5分钟
+❯ 重构原型页的前端结构
+fable-5[1m] ▓▓▓▓░░░░░░ 36% (361k)  …/frontend-prototype-redesign
+▎ Now the logic implementation — check how …
 ```
 
-— status, model, current context size, and a recap of Claude's last
-reply, pulled from each pane's transcript rather than scraped off the
-screen, sized to fit the preview height. One glance answers "what's
-everyone in this session up to". Enter drops you into the session (its
-last active pane). `→` flips back to pane-select. Bold-cyan headers vs
+— status, a `❯` task line (the session's first prompt), model, current
+context size, and a `▎`-quoted recap of Claude's last reply, pulled from
+each pane's transcript rather than scraped off the screen, sized to fit
+the preview height. One glance answers "what's everyone in this session
+up to". Enter drops you into the session (its last active pane). `l`
+(or `→`) flips back to pane-select. Bold-cyan headers vs
 plain, deeper-indented pane rows is what tells you at a glance which
 mode you're in.
 
