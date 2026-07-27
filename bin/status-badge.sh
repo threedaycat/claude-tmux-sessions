@@ -73,7 +73,7 @@ IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 
 now = time.time()
 blocked = []            # (elapsed_secs, window_name) for blocked-and-unread
-idle = done_unread = running = read = 0
+done_unread = running = 0
 for pane, e in data.items():
     if pane not in live or e.get("archived"):
         continue
@@ -86,13 +86,13 @@ for pane, e in data.items():
     if status == "blocked" and not e.get("read"):
         blocked.append((age, win_of.get(pane) or e.get("window_name") or pane))
     elif status in ("done", "input") and e.get("read"):
-        read += 1                       # already visited once — quiet
-    elif status == "input":
+        pass                            # already seen — kept out of the bar
+    elif status in ("done", "input"):
+        # "done" (Stop hook) and "input" (idle, waiting on your next
+        # message) both mean "Claude finished, unread" — one DONE count.
         if age < IDLE_STALE:
-            idle += 1                   # fresh idle — still worth a glance
+            done_unread += 1            # a result worth a look
         # else: aged out — dropped from the bar entirely
-    elif status == "done":
-        done_unread += 1
     elif status == "running":
         running += 1
 
@@ -212,26 +212,21 @@ if blocked:
     blocked.sort(reverse=True)          # longest-waiting named first
     age, name = blocked[0]
     n = len(blocked)
-    chip = f"#[fg=#e4e4e4,bg=#d70000,bold] WAIT{f' {n}' if n > 1 else ''} #[default]"
+    chip = f"#[fg=#e4e4e4,bg=#d70000,bold] ⏸︎ WAIT{f' {n}' if n > 1 else ''} #[default]"
     label = clip(name) + (f" +{n - 1}" if n > 1 else "")
     parts.append(
         f"{chip} #[fg=#e4e4e4]{label}#[default]  #[fg=#8a8a8a]{fmt_dur(age)}#[default]"
     )
-# Dots left-to-right in the picker's own priority order — most important
-# first, so you only ever have to read the left of the segment and can
-# ignore whatever's to the right: idle (magenta, waiting on you to reply),
-# done-unread (green, finished — a result to look at), running (yellow,
-# Claude's busy, nothing to do), read (blue, already seen — quietest).
-# The blocked WAIT chip above outranks them all and leads the segment.
-# Same colours as the picker's labels, so the whole state matches it.
-if idle:
-    parts.append(f"#[fg=#ff00af]● {idle}")
+# Only the two states worth acting on show here — already-read and
+# aged-out panes stay out of the ambient bar so it never nags with noise.
+# Icons and colours match the picker's labels: ✔ DONE-unread (green, a
+# result to look at) leads, then ▶ RUN (yellow, Claude's still busy —
+# nothing for you to do). The blocked WAIT chip above outranks both and
+# leads the whole segment. ︎ forces the narrow text glyph.
 if done_unread:
-    parts.append(f"#[fg=#5fff00]● {done_unread}")
+    parts.append(f"#[fg=#5fff00]✔︎ {done_unread}")
 if running:
-    parts.append(f"#[fg=#ffff00]● {running}")
-if read:
-    parts.append(f"#[fg=#00afff]● {read}")
+    parts.append(f"#[fg=#ffff00]▶︎ {running}")
 
 if parts:
     print("  ".join(parts) + "#[default] ")
