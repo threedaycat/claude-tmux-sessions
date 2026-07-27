@@ -33,7 +33,7 @@ cur="${1:-0}"
 dir="${2:-down}"
 key="${3:-}"
 
-PANE_HEADER='j/k 选窗口 · 1-9 直跳 · h 选 session · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+PANE_HEADER='j/k 选窗口 · 数字直跳(两位数续按) · h 选 session · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 SESSION_HEADER='j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
 SEARCH_HEADER='输入过滤 · Enter 跳转 · Esc 返回 j/k 导航'
 
@@ -49,6 +49,13 @@ mode_header() {
     printf '%s' "$PANE_HEADER"
   fi
 }
+
+# A pending multi-digit jump (see the digit handler below) is continued
+# only by another digit; any other key ends it. Clearing here covers every
+# path — search keys, arrows, mode switches, quit.
+if [ "$dir" != "digit" ] && [ -n "${PENDING_FILE:-}" ]; then
+  : > "$PENDING_FILE" 2>/dev/null || true
+fi
 
 if [ "${FZF_INPUT_STATE:-disabled}" = "enabled" ]; then
   # Search mode: printable keys type, arrows act stock, Esc exits search.
@@ -87,18 +94,33 @@ fi
 TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
 HEADER_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "") print NR }' | paste -sd, -),"
 
-# Digit key in navigation mode: jump straight to the Nth pane row (Nth
-# non-header line, counting from the top across all sessions — the number
-# shown in each row's gutter) and accept it. Direct jump, no Enter needed.
-# In search mode this never runs — the top block already types the digit
-# into the query. A digit past the last pane row is a no-op.
+# Digit key in navigation mode: type a pane-row number (the gutter number
+# shown in each row) and jump there. A digit still jumps *instantly* the
+# moment it can't be the start of a larger valid number — so with fewer
+# than 10 rows every 1-9 is instant exactly as before. Once two-digit rows
+# exist, a first digit that could be extended (e.g. 1 while rows 10-19
+# exist) parks the cursor on that row and waits: press the next digit to
+# complete it (12 -> auto-jumps, since nothing extends it) or Enter to take
+# the parked row as-is. $PENDING_FILE holds the digits so far; it's cleared
+# by any non-digit key (top of script) and once a jump fires. In search
+# mode this never runs — the top block types the digit into the query.
 if [ "$dir" = "digit" ]; then
+  pend=""
+  [ -n "${PENDING_FILE:-}" ] && [ -s "$PENDING_FILE" ] && pend="$(cat "$PENDING_FILE")"
+  n=$((10#${pend}${key}))                       # digits so far, as a number
+  total_panes=$(printf '%s\n' "$rows" | awk -F'\t' '$2 != "" { c++ } END { print c + 0 }')
   line=$(printf '%s\n' "$rows" \
-    | awk -F'\t' -v n="$key" '$2 != "" { c++; if (c == n) { print NR; exit } }')
-  if [ -n "$line" ]; then
-    echo "pos($line)+accept"
+    | awk -F'\t' -v n="$n" '$2 != "" { c++; if (c == n) { print NR; exit } }')
+  if [ "$n" -ge 1 ] && [ -n "$line" ]; then
+    if [ $(( n * 10 )) -gt "$total_panes" ]; then
+      if [ -n "${PENDING_FILE:-}" ]; then : > "$PENDING_FILE" 2>/dev/null || true; fi
+      echo "pos($line)+accept"                  # can't be extended — jump now
+    else
+      if [ -n "${PENDING_FILE:-}" ]; then printf '%s' "$n" > "$PENDING_FILE"; fi
+      echo "pos($line)"                          # could take another digit — park & wait
+    fi
   else
-    echo "ignore"
+    echo "ignore"                                # 0, or out of range — keep any pending prefix
   fi
   exit 0
 fi
