@@ -55,7 +55,14 @@ printf 'pane' > "$MODE_FILE"
 ROWS_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-rows.XXXXXX")"
 export ROWS_FILE
 printf '%s\n' "$rows" > "$ROWS_FILE"
-trap 'rm -f "$MODE_FILE" "$ROWS_FILE"' EXIT
+
+# Accumulator for multi-digit row jumps (skip-header.sh): the digits typed
+# so far while it waits to see whether another follows. Empty = no jump in
+# progress; cleared by any non-digit key and once a jump fires.
+PENDING_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-pending.XXXXXX")"
+export PENDING_FILE
+
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE"' EXIT
 
 # Starts with search disabled AND the input line hidden (--disabled
 # --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
@@ -65,7 +72,7 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE"' EXIT
 # navigation) — all dispatched through skip-header.sh, which branches on
 # FZF_INPUT_STATE (hidden in navigation, enabled while searching).
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
-  --header='j/k 选窗口 · 1-9 直跳 · h 选 session · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+  --header='j/k 选窗口 · 数字直跳(两位数续按) · h 选 session · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3}"
   --preview-window='right,60%,border-left,wrap,follow'
@@ -84,11 +91,14 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --bind "ctrl-x:execute-silent(python3 '$STATUS_UPDATER' mark-archived {2})+reload($BIN_DIR/list-rows.sh | tee '$ROWS_FILE')"
   --bind "start:bg-transform-footer:$BIN_DIR/usage-footer.sh")
 
-# Digits 1-9 jump straight to that numbered pane row (the gutter number in
-# each row) and accept — the "type a number to jump" shortcut. Routed
+# Digits type a pane-row number (the gutter number) and jump there — see
+# skip-header.sh. 1-9 still jump instantly whenever they can't begin a
+# larger valid number (so <10 rows is unchanged); with two-digit rows a
+# first digit parks the cursor and waits for the next digit or Enter. 0 is
+# bound too but only ever lands as a second digit (rows 10, 20, …). Routed
 # through skip-header.sh so that while search is open the same keys type
-# into the query instead. Rows past 9 aren't digit-reachable; use / or j/k.
-for d in 1 2 3 4 5 6 7 8 9; do
+# into the query instead.
+for d in 0 1 2 3 4 5 6 7 8 9; do
   fzf_args+=(--bind "$d:transform:$BIN_DIR/skip-header.sh {n} digit $d")
 done
 
