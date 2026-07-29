@@ -68,8 +68,13 @@ def vwidth(s):
 
 
 def pad(s, width):
+    """Pad to `width`, but always leave at least one trailing space: every
+    use here is a column separator, and content that happens to fill the
+    width exactly (`完成 16.9小时前` is exactly 15 cols, a 12-wide CJK
+    window name exactly 24) would otherwise butt straight up against the
+    next column with no gap."""
     w = vwidth(s)
-    return s if w >= width else s + " " * (width - w)
+    return s + " " * max(1, width - w)
 
 
 def fmt_age(rank, secs):
