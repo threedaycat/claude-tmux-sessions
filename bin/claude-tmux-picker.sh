@@ -5,7 +5,10 @@
 # left switches to session mode where up/down stop only on headers and
 # Enter jumps to that session's active pane; right switches back. The
 # right-side preview follows the cursor either way; Enter jumps; ctrl-x
-# archives a pane you're done caring about.
+# archives a pane you're done caring about. The preview takes
+# CLAUDE_TMUX_PREVIEW_WIDTH% (default 42) and `p` collapses it entirely,
+# giving the list the full width — with a dozen-plus panes tracked, room to
+# read names and cwds matters more than one pane's screen.
 set -euo pipefail
 
 # Resolve through the ~/.claude/hooks symlink to this script's real location,
@@ -72,10 +75,10 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE"' EXIT
 # navigation) — all dispatched through skip-header.sh, which branches on
 # FZF_INPUT_STATE (hidden in navigation, enabled while searching).
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
-  --header='j/k 选窗口 · 数字直跳(两位数续按) · h 选 session · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+  --header='j/k 选窗口 · 数字直跳 · h session · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3}"
-  --preview-window='right,60%,border-left,wrap,follow'
+  --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-42}%,border-left,wrap,follow"
   --preview-label=' Claude 实时画面 '
   --bind "down:transform:$BIN_DIR/skip-header.sh {n} down"
   --bind "up:transform:$BIN_DIR/skip-header.sh {n} up"
@@ -86,6 +89,7 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --bind "h:transform:$BIN_DIR/skip-header.sh {n} left h"
   --bind "l:transform:$BIN_DIR/skip-header.sh {n} right l"
   --bind "/:transform:$BIN_DIR/skip-header.sh {n} slash /"
+  --bind "p:transform:$BIN_DIR/skip-header.sh {n} preview p"
   --bind "q:transform:$BIN_DIR/skip-header.sh {n} quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh {n} esc"
   --bind "ctrl-x:execute-silent(python3 '$STATUS_UPDATER' mark-archived {2})+reload($BIN_DIR/list-rows.sh | tee '$ROWS_FILE')"
