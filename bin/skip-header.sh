@@ -33,7 +33,7 @@ cur="${1:-0}"
 dir="${2:-down}"
 key="${3:-}"
 
-PANE_HEADER='j/k 选窗口 · 数字直跳(两位数续按) · h 选 session · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 SESSION_HEADER='j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
 SEARCH_HEADER='输入过滤 · Enter 跳转 · Esc 返回 j/k 导航'
 
@@ -78,6 +78,13 @@ fi
 case "$dir" in
   slash)
     echo "show-input+enable-search+change-header($SEARCH_HEADER)"
+    exit 0
+    ;;
+  preview)
+    # Collapse the preview entirely so the list gets the full width — with
+    # a dozen-plus panes, scanning names/cwds beats seeing one pane's
+    # screen. Press again to bring it back.
+    echo "toggle-preview"
     exit 0
     ;;
   quit|esc)

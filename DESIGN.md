@@ -152,6 +152,11 @@ key:
   waits: press the next digit to complete it, or Enter to take the parked row.
   A per-instance `PENDING_FILE` holds the digits so far, cleared by any non-digit
   key and once a jump fires.
+- **`p` toggles the preview off entirely** (fzf's `toggle-preview`), handing the
+  list the full width. Past roughly a dozen tracked panes, reading window names
+  and cwds beats seeing one pane's screen, and this avoids having to pick one —
+  the default split is `CLAUDE_TMUX_PREVIEW_WIDTH`% (42) rather than the
+  original 60, which left the list too narrow to show a full path.
 - **`h` / `←` → session mode**: the cursor snaps to session headers (up/down move
   header-to-header), Enter jumps to that session's last active pane, and the
   preview becomes one compact card per pane (see below). `l` / `→` snaps back to
