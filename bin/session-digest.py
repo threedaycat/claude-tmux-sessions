@@ -197,20 +197,64 @@ def label_of(entry):
     return "\033[33mRUN \033[0m", 2
 
 
+# Context-window sizes we know how to scale the meter against, smallest
+# first. There is no authoritative limit anywhere in the transcript (no
+# field records it, and compactMetadata only ever shows *manual* compacts,
+# so it teaches us nothing about the ceiling), and hardcoding a model->size
+# table is exactly what rotted last time: the [1m] suffix that used to mark
+# long-context models no longer appears in model ids at all, so every
+# model was being measured against 200k and pinned at a permanent 100%.
+# Instead we infer from evidence — a context of 357k *proves* the window is
+# bigger than 200k — which needs no model knowledge and so can't go stale.
+CTX_TIERS = (200_000, 1_000_000)
+
+
+def ctx_limit(model, ctx):
+    """Best guess at this session's context window. An explicit override
+    always wins; the legacy [1m] marker is still honoured; otherwise pick
+    the smallest tier the current context actually fits in.
+
+    The one blind spot: under 200k a big window is indistinguishable from a
+    small one, so a 1M session sitting at 170k is scaled against 200k and
+    warns early. That's the deliberate direction to be wrong in — a
+    spurious "consider compacting" costs you a glance, while staying quiet
+    on a genuinely full 200k window costs you a surprise auto-compact
+    mid-task — and it corrects itself the moment the context passes 200k."""
+    override = os.environ.get("CLAUDE_TMUX_CONTEXT_LIMIT")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            pass
+    if "[1m]" in (model or ""):
+        return 1_000_000
+    for tier in CTX_TIERS:
+        if ctx <= tier:
+            return tier
+    return CTX_TIERS[-1]
+
+
 def ctx_bar(model, ctx, cells=10):
     """Claude-Code-statusline-style context meter: ▓▓▓▓░░░░░░ 47% (93k),
-    plus a red ⚠ /compact once ≥80% of the window is used. 200k window
-    unless the model id carries the [1m] long-context marker."""
+    plus a red ⚠ /compact when you're actually near the ceiling.
+
+    The trigger is *remaining headroom*, not a percentage, because a
+    percentage doesn't survive the jump from 200k to 1M windows: 80% of
+    200k leaves 40k and is worth acting on, while 80% of 1M leaves 200k —
+    more room than an entire small window — and nagging there is noise.
+    Warning under ~40k left reproduces the old 80% behaviour exactly on a
+    200k window, and scales to ~95% on 1M (a bit more absolute slack, since
+    one large tool result goes further toward filling what's left)."""
     if not ctx:
         return None
-    limit = 1_000_000 if "[1m]" in (model or "") else 200_000
+    limit = ctx_limit(model, ctx)
     frac = min(1.0, ctx / limit)
     fill = round(frac * cells)
     s = (
         "▓" * fill + DIM + "░" * (cells - fill) + RESET
         + f" {frac * 100:.0f}% ({ctx // 1000}k)"
     )
-    if frac >= 0.8:
+    if limit - ctx < max(40_000, limit // 20):
         s += " \033[31m⚠ /compact\033[0m"
     return s
 
@@ -218,7 +262,7 @@ def ctx_bar(model, ctx, cells=10):
 def pane_bar(pane):
     """--pane mode: one Claude-Code-statusline-style line for a single
     tracked pane, printed above the live screen dump in the pane preview
-    — status · model · context size (± % of 200k) · status-aware elapsed
+    — status · model · context size (± % of the window) · status-aware elapsed
     time · cwd, then a dim rule."""
     try:
         with open(STATUS_FILE) as f:

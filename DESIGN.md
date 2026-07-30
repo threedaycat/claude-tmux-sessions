@@ -173,7 +173,8 @@ Moving the selection instantly re-runs `tmux capture-pane -S -200` on the
 highlighted pane in the right-hand preview, scrolled to the bottom (`follow`) so
 you see the most recent output. It's topped by a Claude-Code-statusline-style
 bar (`session-digest.py --pane`): status · model · a `▓░` context meter (% of
-the 200k window — 1M for `[1m]` models — with a red `⚠ /compact` once ≥80%) ·
+the context window, see below — with a red `⚠ /compact` when the remaining
+headroom gets thin) ·
 the status-aware elapsed time · cwd, read via a cheap 80KB transcript tail so it
 costs ~40ms per cursor stop.
 
