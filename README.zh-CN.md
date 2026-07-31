@@ -19,33 +19,24 @@
   <a href="README.md">English</a> · <b>简体中文</b>
 </p>
 
-<!--
-  DEMO GIF: 录好之后放到 docs/demo.gif,然后取消下面这行的注释 ——
-  这是本 README 目前最缺的一样东西。
+<p align="center">
+  <img src="docs/picker.png" alt="picker:三个 session、九个 pane,其中一个卡在权限确认上,右侧是高亮 pane 的实时画面" width="960">
+</p>
 
-  <p align="center"><img src="docs/demo.gif" alt="prefix+g 唤出 picker;j/k 移动;Enter 跳转" width="820"></p>
-  约 10 秒:prefix+g → 列表弹出 → j/k 往下两格(预览跟着走)→ Enter。
--->
-
-`prefix + g` —— 真实输出,四个 session,十七个 pane:
-
-```
-▾ $1 work             ▶ 1  ✓ 2
-   1  ▶ RUN   api-refactor           已运行 1分钟      ~/repos/api
-   2  ✓ READ  scratch                44.7小时前        ~/repos/api
-   3  ✓ READ  notes                  43.6小时前        ~
-▾ $2 journal          ⏸ 1  ✔ 2  ✓ 1
-   4  ⏸ WAIT  deploy-script          等确认 12秒       ~/repos/infra
-   5  ✔ DONE  migrate-db             完成 16秒前       ~/repos/api
-   6  ✔ DONE  weekly-digest          完成 16分钟前     ~/notes
-   7  ✓ READ  remote-debug           2.2小时前         ~/repos/api
-▾ $3 side             ✔ 1  ✓ 1
-   8  ✔ DONE  prototype-redesign     完成 27.4小时前   ~/side/prototype
-   9  ✓ READ  translate-dev          3小时前           ~/side/translate
-```
+<p align="center">
+  <sub><code>prefix + g</code>。由真实脚本渲染,数据是演示 fixture ——
+  见 <a href="docs/demo/">docs/demo</a>。</sub>
+</p>
 
 每一行都有编号 —— 按 `5`,直接落到第 5 行。光标默认停在你当前所在的那个 pane,右侧则是
 **光标所在 pane 的实时画面**,随光标移动。
+
+<!--
+  还缺一段约 10 秒的 GIF(docs/demo.gif):prefix+g → 列表弹出 → j/k 往下两格、
+  预览跟着走 → Enter。静图已经能撑住 README,动图是 V2EX / HN 要的。
+  录制配方在 docs/PROMO.md。
+-->
+
 
 ---
 
@@ -142,9 +133,9 @@ bind W run-shell '~/.claude/hooks/jump-top.sh'
 
 渲染出来是额度条、仅在有东西被卡住时才出现的 WAIT badge,然后是完成未读数和运行中的计数:
 
-```
-5h ▓▓▓░░░░░░░ 32% ↻20:09    ⏸ WAIT deploy-script  12秒    ✔ 2  ▶ 1
-```
+<p align="center">
+  <img src="docs/statusbar.png" alt="状态栏片段:5 小时额度条 32%、deploy-script 的红色 WAIT badge、然后是 2 个完成未读和 1 个运行中" width="700">
+</p>
 
 ### 确认装好了
 
@@ -175,7 +166,7 @@ rm -f ~/.claude/tmux-claude-status.json ~/.claude/tmux-claude-restore.json ~/.cl
 - **行号**直接跳过去。`/` 切换成按名字搜索(`Esc` 回到导航模式)。
 - `h` / `←` 进入 session 模式;`l` / `→` 退出。
 - `p` 收起预览,把整个宽度让给列表 —— 追踪十几个 pane、想扫一眼名字和路径的时候值得。再按
-  一次把预览叫回来,或者用 `CLAUDE_TMUX_PREVIEW_WIDTH`(默认 `42`,百分比)改默认的分栏比例。
+  一次把预览叫回来,或者用 `CLAUDE_TMUX_PREVIEW_WIDTH`(默认 `60`,百分比)改默认的分栏比例。
 - `Enter` 跳转 · `ctrl-x` 归档当前高亮的 pane · `q` / `Esc` 关闭。
 
 ## 为什么不直接……

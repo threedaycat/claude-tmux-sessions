@@ -41,6 +41,19 @@ running a plain shell. While Claude is alive (even mid-tool-call) tmux reports
 the claude process as `pane_current_command`, so a bare `zsh`/`bash` there means
 Claude has exited and the entry can go.
 
+One guard makes this safe: a pane id only means anything relative to a single
+tmux server, and there is no way to ask "is this the server these ids came
+from?". So prune requires the file and the server to **overlap by at least one
+pane** before it believes a missing id means a dead pane. Without that check,
+running any reader while `$TMUX` points at a different server — a second server,
+a nested session, a stale env var — makes every id look dead and wipes the whole
+file. (Found the hard way: generating the screenshots in `docs/demo/` spins up a
+second tmux server, and it ate 20 live panes' worth of state.) No overlap is
+genuinely ambiguous — wrong server, or a tmux restart that renumbered
+everything — so prune does nothing, which self-corrects: entries whose pane is
+absent are invisible in the UI regardless, and as soon as one live pane
+registers there is an overlap again and the next prune clears the corpses.
+
 ## The four states
 
 The UI collapses the raw statuses into four states, each with a distinct
@@ -153,10 +166,11 @@ key:
   A per-instance `PENDING_FILE` holds the digits so far, cleared by any non-digit
   key and once a jump fires.
 - **`p` toggles the preview off entirely** (fzf's `toggle-preview`), handing the
-  list the full width. Past roughly a dozen tracked panes, reading window names
-  and cwds beats seeing one pane's screen, and this avoids having to pick one —
-  the default split is `CLAUDE_TMUX_PREVIEW_WIDTH`% (42) rather than the
-  original 60, which left the list too narrow to show a full path.
+  list the full width — which is the right answer to "the list is too cramped",
+  because narrowing the split isn't: it was tried at
+  `CLAUDE_TMUX_PREVIEW_WIDTH`% = 42 and the preview stopped being readable
+  (Claude's output wraps hard below ~60 columns), so both panels ended up worse.
+  The default is back to 60 and `p` covers the scan-the-list case outright.
 - **`h` / `←` → session mode**: the cursor snaps to session headers (up/down move
   header-to-header), Enter jumps to that session's last active pane, and the
   preview becomes one compact card per pane (see below). `l` / `→` snaps back to

@@ -13,13 +13,16 @@
 
 > 只想投一次的话:先做 i18n,然后中英文渠道一起发。反过来(先英文后 i18n)是最差的顺序——第一印象只有一次。
 
-**两阶段都有一个共同前提:先录出 demo GIF。** 这类工具在任何渠道的成败几乎都取决于那张图。
+**两阶段都有一个共同前提:先有图。** 这类工具在任何渠道的成败几乎都取决于那张图。静图已经
+有了(`docs/picker.png`、`docs/statusbar.png`,装置在 `docs/demo/`),足够支撑知乎和掘金这类
+长文渠道;V2EX 和 HN 那种一眼流的地方还是得补一段 10 秒的 GIF。
 
 ---
 
 ## 发布前检查清单
 
-- [ ] `docs/demo.gif` 录好,并在 README 里取消那段注释
+- [x] 静图 `docs/picker.png` / `docs/statusbar.png` 已进 README(装置见 `docs/demo/`)
+- [ ] `docs/demo.gif` 录好,并在 README 里取消那段注释 —— 静图够撑知乎/掘金,V2EX 和 HN 要动图
 - [ ] README 里的 clone 地址是新账号 `threedaycat`
 - [ ] 仓库加上 GitHub topics:`tmux` `claude-code` `fzf` `cli` `developer-tools` `ai-agents`
 - [ ] 仓库 About 一句话描述 + 不要留空
