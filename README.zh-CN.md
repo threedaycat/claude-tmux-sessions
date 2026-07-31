@@ -173,7 +173,8 @@ rm -f ~/.claude/tmux-claude-status.json ~/.claude/tmux-claude-restore.json ~/.cl
 - `a` 在"只看要我处理的"(默认)和"全部 pane"之间切换。想每次都直接展开就设
   `CLAUDE_TMUX_SHOW_ALL=1`。你当前所在的那个 pane 永远不会被收起,即使它是安静的那类。
 - `p` 收起预览,把整个宽度让给列表 —— 追踪十几个 pane、想扫一眼名字和路径的时候值得。再按
-  一次把预览叫回来,或者用 `CLAUDE_TMUX_PREVIEW_WIDTH`(默认 `60`,百分比)改默认的分栏比例。
+  一次把预览叫回来,或者用 `CLAUDE_TMUX_PREVIEW_WIDTH`(默认 `50` —— 对半分,预览就和它显示的那个 pane 差不多宽)
+  改这个比例。
 - `Enter` 跳转 · `ctrl-x` 归档当前高亮的 pane · `q` / `Esc` 关闭。
 
 ## 为什么不直接……

@@ -228,7 +228,9 @@ key:
   because narrowing the split isn't: it was tried at
   `CLAUDE_TMUX_PREVIEW_WIDTH`% = 42 and the preview stopped being readable
   (Claude's output wraps hard below ~60 columns), so both panels ended up worse.
-  The default is back to 60 and `p` covers the scan-the-list case outright.
+  The default is 50 — an even split makes the preview about as wide as the pane
+  it's capturing, so that screen shows at its real shape rather than reflowed —
+  and `p` covers the scan-the-list case outright.
 - **`h` / `←` → session mode**: the cursor snaps to session headers (up/down move
   header-to-header), Enter jumps to that session's last active pane, and the
   preview becomes one compact card per pane (see below). `l` / `→` snaps back to

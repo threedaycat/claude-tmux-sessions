@@ -6,10 +6,13 @@
 # Enter jumps to that session's active pane; right switches back. The
 # right-side preview follows the cursor either way; Enter jumps; ctrl-x
 # archives a pane you're done caring about. The preview takes
-# CLAUDE_TMUX_PREVIEW_WIDTH% (default 60): narrower splits fit more of the
-# list on screen, but Claude's own output wraps hard below ~60 columns, and a
-# preview you can't actually read is worth less than the columns it saves.
-# `p` collapses it entirely for when you do just want to scan the list.
+# CLAUDE_TMUX_PREVIEW_WIDTH% (default 50). An even split is the one width
+# that needs no justification: the preview ends up about as wide as the Claude
+# pane it is showing, so the captured screen appears at the shape it really
+# has instead of reflowing. Narrower fits more list, but Claude's own output
+# wraps hard below ~60 columns and a preview you can't read is worth less than
+# the columns it saves; `p` collapses it entirely for when you do just want to
+# scan the list.
 set -euo pipefail
 
 # Resolve through the ~/.claude/hooks symlink to this script's real location,
@@ -89,7 +92,7 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --header='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3}"
-  --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-60}%,border-left,wrap,follow"
+  --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,border-left,wrap,follow"
   --preview-label=' Claude 实时画面 '
   --bind "down:transform:$BIN_DIR/skip-header.sh {n} down"
   --bind "up:transform:$BIN_DIR/skip-header.sh {n} up"

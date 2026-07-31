@@ -87,6 +87,25 @@ case "$dir" in
     # process. list-rows.sh reads it via CLAUDE_TMUX_SHOW_ALL_FILE, so the
     # reload re-renders with the quiet panes shown (or hidden) — and because
     # numbers are assigned before the visibility test, nothing renumbers.
+    #
+    # fzf's reload() puts the cursor back on the first row, which is wrong
+    # here: `a` changes how much of the list you can see, not where you are.
+    # So remember what the cursor is on *before* reloading, build the new
+    # list here rather than inside reload(), and follow up with pos() on
+    # wherever that same row landed. reload-sync (not reload) is what makes
+    # the pos() land on the new list instead of racing the old one.
+    # Fields come out via awk, not `read -r ... < <(...)`: tab is an IFS
+    # *whitespace* character, so `IFS=$'\t' read` collapses runs of it and a
+    # header row (whose pane field is empty) parses one field short — the
+    # session name lands in old_pane and the cursor jumps.
+    old_pane="" old_session="" old_num=""
+    if [ -n "${ROWS_FILE:-}" ] && [ -s "$ROWS_FILE" ]; then
+      cur_line=$(( cur + 1 ))
+      old_pane=$(awk -F'\t' -v n="$cur_line" 'NR == n { print $2 }' "$ROWS_FILE")
+      old_session=$(awk -F'\t' -v n="$cur_line" 'NR == n { print $3 }' "$ROWS_FILE")
+      old_num=$(awk -F'\t' -v n="$cur_line" 'NR == n { print $4 }' "$ROWS_FILE")
+    fi
+
     if [ -n "${SHOW_ALL_FILE:-}" ]; then
       if [ "$(cat "$SHOW_ALL_FILE" 2>/dev/null)" = "1" ]; then
         printf '0' > "$SHOW_ALL_FILE"
@@ -94,7 +113,23 @@ case "$dir" in
         printf '1' > "$SHOW_ALL_FILE"
       fi
     fi
-    echo "reload($BIN_DIR/list-rows.sh | tee '${ROWS_FILE:-/dev/null}')"
+
+    if [ -z "${ROWS_FILE:-}" ]; then
+      echo "reload($BIN_DIR/list-rows.sh)"
+      exit 0
+    fi
+    "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
+    # Exact row if it's still visible; otherwise — you collapsed the very row
+    # you were on — the nearest pane row at or above its old number, which
+    # keeps you in the same neighbourhood instead of at the top.
+    new_pos=$(awk -F'\t' -v p="$old_pane" -v s="$old_session" -v num="$old_num" '
+      $2 != "" && $2 == p { print NR; found = 1; exit }
+      $2 == "" && $4 == "" && p == "" && $3 == s { print NR; found = 1; exit }
+      { if ($2 != "") { if (first == 0) first = NR
+                        if (num != "" && $4 != "" && $4 + 0 <= num + 0) near = NR } }
+      END { if (!found) print (near ? near : (first ? first : 1)) }
+    ' "$ROWS_FILE")
+    echo "reload-sync(cat '$ROWS_FILE')+pos(${new_pos:-1})"
     exit 0
     ;;
   preview)

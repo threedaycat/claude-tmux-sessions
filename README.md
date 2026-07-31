@@ -203,7 +203,8 @@ Then remove the four `tmux_status_update.py` hook entries from
 - `p` collapses the preview so the list gets the full width — worth it once
   you're tracking a dozen-plus panes and want to scan names and paths. Press it
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
-  `60`, a percentage) to change the default split.
+  `50` — an even split, so the preview is about as wide as the pane it's
+  showing) to change it.
 - `Enter` jumps · `ctrl-x` archives the highlighted pane · `q` / `Esc` closes.
 
 ## Why not just…

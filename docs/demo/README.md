@@ -29,8 +29,8 @@ tmux -L shotdemo -f /dev/null kill-server && rm -rf /private/tmp/shotroom
 四件事必须说清楚,否则这些图就是在暗示一些它没有兑现的东西:
 
 0. **图里的分栏不是默认值。** 上面那条命令显式设了
-   `CLAUDE_TMUX_PREVIEW_WIDTH=42`,而工具的默认是 `60`。纯粹为了可读性:60% 预览要留出
-   ~90 列的列表才不截 header,整张图就得 225 列宽,缩到 README 的 960px 之后字就糊了。
+   `CLAUDE_TMUX_PREVIEW_WIDTH=42`,而工具的默认是 `50`。纯粹为了可读性:header 要不被截
+   需要 ~96 列的列表,按默认分栏整张图就得 190+ 列宽,缩到 README 的 960px 之后字就糊了。
    除了分栏比例,图上其它一切都是默认行为。
 
 1. **数据是编的。** 22 个 pane、时长、额度百分比、token 数全是 `stage-demo.sh` 里的
