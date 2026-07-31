@@ -1,20 +1,35 @@
 #!/usr/bin/env bash
 # fzf preview for one picker row.
-# args: $1 = pane_id (empty on session header rows), $2 = session name
+# args: $1 = pane_id (empty on session header / extra rows)
+#       $2 = session name (empty on extra rows)
+#       $3 = kind ("extra" on provider rows, empty otherwise)
+#       $4 = opaque id (only meaningful when $3 == "extra")
 #
 # Pane row: show that pane's screen, full depth.
 # Header row (session-select mode): session-digest.py renders one compact
 # card per tracked Claude pane — name/status/age, model + context size,
 # and a recap of Claude's last reply pulled from the transcript — so one
 # glance answers "what's everyone in this session up to".
+# Extra row: hand off to the provider that listed it (see DESIGN.md,
+# "External item provider") — this script doesn't know what the row means.
 set -euo pipefail
 
 pane="${1:-}"
 session="${2:-}"
+kind="${3:-}"
+item_id="${4:-}"
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 [ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
 BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+if [ "$kind" = "extra" ]; then
+  if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; then
+    "$CLAUDE_TMUX_EXTRA_CMD" preview "$item_id" 2>&1 \
+      || echo "(provider 没能给出预览)"
+  fi
+  exit 0
+fi
 
 if [ -n "$pane" ]; then
   # Claude-Code-statusline-style bar on top (status · model · ctx ·
