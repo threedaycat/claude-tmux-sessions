@@ -20,34 +20,25 @@
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-<!--
-  DEMO GIF: drop a recording at docs/demo.gif and uncomment this line —
-  it's the single highest-value thing this README is missing.
+<p align="center">
+  <img src="docs/picker.png" alt="The picker: three sessions, nine panes, one blocked on a permission prompt, with a live preview of the highlighted pane" width="960">
+</p>
 
-  <p align="center"><img src="docs/demo.gif" alt="prefix+g opens the picker; j/k moves; Enter jumps" width="820"></p>
-  ~10s: prefix+g → list appears → j/k down two panes (preview follows) → Enter.
--->
-
-`prefix + g` — real output, four sessions, seventeen panes:
-
-```
-▾ $1 work             ▶ 1  ✓ 2
-   1  ▶ RUN   api-refactor           已运行 1分钟      ~/repos/api
-   2  ✓ READ  scratch                44.7小时前        ~/repos/api
-   3  ✓ READ  notes                  43.6小时前        ~
-▾ $2 journal          ⏸ 1  ✔ 2  ✓ 1
-   4  ⏸ WAIT  deploy-script          等确认 12秒       ~/repos/infra
-   5  ✔ DONE  migrate-db             完成 16秒前       ~/repos/api
-   6  ✔ DONE  weekly-digest          完成 16分钟前     ~/notes
-   7  ✓ READ  remote-debug           2.2小时前         ~/repos/api
-▾ $3 side             ✔ 1  ✓ 1
-   8  ✔ DONE  prototype-redesign     完成 27.4小时前   ~/side/prototype
-   9  ✓ READ  translate-dev          3小时前           ~/side/translate
-```
+<p align="center">
+  <sub><code>prefix + g</code>. Rendered by the real scripts against a demo
+  fixture — see <a href="docs/demo/">docs/demo</a>.</sub>
+</p>
 
 Every row is numbered — press `5`, land on pane 5. The cursor starts on the pane
 you're already in, and the right-hand pane shows a **live capture of that
 Claude's screen** as you move.
+
+<!--
+  Still missing: a ~10s GIF at docs/demo.gif (prefix+g → list appears → j/k down
+  two panes, preview following → Enter). The stills carry the README; the motion
+  is what V2EX/HN want. Recipe in docs/PROMO.md.
+-->
+
 
 ---
 
@@ -163,9 +154,9 @@ For the ambient status segment, splice this into your `status-right`:
 which renders the quota bar, a WAIT badge only while something's blocked, then
 counts of unread-done and running:
 
-```
-5h ▓▓▓░░░░░░░ 32% ↻20:09    ⏸ WAIT deploy-script  12秒    ✔ 2  ▶ 1
-```
+<p align="center">
+  <img src="docs/statusbar.png" alt="Status line segment: 5h quota bar at 32%, a red WAIT badge for deploy-script, then 2 done-unread and 1 running" width="700">
+</p>
 
 ### Check it's working
 
@@ -200,7 +191,7 @@ Then remove the four `tmux_status_update.py` hook entries from
 - `p` collapses the preview so the list gets the full width — worth it once
   you're tracking a dozen-plus panes and want to scan names and paths. Press it
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
-  `42`, a percentage) to change the default split.
+  `60`, a percentage) to change the default split.
 - `Enter` jumps · `ctrl-x` archives the highlighted pane · `q` / `Esc` closes.
 
 ## Why not just…
