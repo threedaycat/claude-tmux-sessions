@@ -14,8 +14,8 @@ set -euo pipefail
 
 SRV="shotdemo"
 H="/private/tmp/shotroom"
-COLS=174
-ROWS=26
+COLS="${COLS:-174}"
+ROWS="${ROWS:-26}"
 # -f /dev/null: the demo server must not read ~/.tmux.conf. Someone else's
 # config would change what the screenshot looks like (and mine set a window
 # index that collided with the fixture's), which defeats the whole point of

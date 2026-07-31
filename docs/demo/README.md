@@ -24,6 +24,26 @@ docs/demo/render.sh /tmp/bar.ansi docs/statusbar.png 17
 tmux -L shotdemo -f /dev/null kill-server && rm -rf /private/tmp/shotroom
 ```
 
+### 知乎题图 `docs/zhihu-cover.png`
+
+不同的用途要不同的画幅:题图在信息流里按 ~16:9 显示,而 README 那张是宽幅。所以尺寸走环境
+变量,并且**先按 `p` 收起预览** —— 题图只有一次机会,要让整支舰队占满画面,而不是一半给
+某一个 pane 的屏幕。
+
+```bash
+COLS=130 ROWS=30 docs/demo/stage-demo.sh        # 130x30 ≈ 16:9
+tmux -L shotdemo -f /dev/null new-window -d -t work: -n shot \
+  "HOME=/private/tmp/shotroom $PWD/bin/claude-tmux-picker.sh"
+sleep 3
+tmux -L shotdemo -f /dev/null send-keys -t work:shot p   # 收起预览,列表占满
+sleep 1.5
+tmux -L shotdemo -f /dev/null capture-pane -p -e -t work:shot > /tmp/cover.ansi
+docs/demo/render.sh /tmp/cover.ansi docs/zhihu-cover.png 15
+```
+
+画幅别再压窄:106 列时预览的边框列正好落在行文本宽度之内,`p` 收起后那一列 `│` 不会被重绘,
+图上会留下一竖行残影。130 列没有这个问题。
+
 ## 诚实边界
 
 四件事必须说清楚,否则这些图就是在暗示一些它没有兑现的东西:
