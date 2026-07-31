@@ -124,8 +124,8 @@ def clip(s, width):
 
     pad() only ever pads, which was fine until a window name arrived longer
     than its column: Claude Code writes the *current task* into the tmux
-    window title, so names are occasionally sentence-length ("workOS✳
-    Configure desk assistant for decision logging"), and one of those used
+    window title, so names are occasionally sentence-length ("api-server✳
+    Refactor auth middleware for token rotation"), and one of those used
     to shove the time and path columns off the right edge — breaking the
     alignment of that whole row while every other row stayed neat.
 
