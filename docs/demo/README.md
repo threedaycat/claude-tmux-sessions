@@ -9,19 +9,19 @@
 
 ```bash
 docs/demo/stage-demo.sh                      # 起一个私有 tmux server + 假 $HOME + 数据
-tmux -L shotdemo new-window -d -t work -n shot \
+tmux -L shotdemo -f /dev/null new-window -d -t work -n shot \
   "HOME=/private/tmp/shotroom CLAUDE_TMUX_PREVIEW_WIDTH=42 $PWD/bin/claude-tmux-picker.sh"
 sleep 3
-tmux -L shotdemo capture-pane -p -e -t work:shot > /tmp/picker.ansi
+tmux -L shotdemo -f /dev/null capture-pane -p -e -t work:shot > /tmp/picker.ansi
 docs/demo/render.sh /tmp/picker.ansi docs/picker.png 15
 
 # 状态栏那条(status-badge.sh 输出 tmux 标记而不是 ANSI，先转一道)
-tmux -L shotdemo new-window -d -t work -n bar \
+tmux -L shotdemo -f /dev/null new-window -d -t work -n bar \
   "HOME=/private/tmp/shotroom $PWD/bin/status-badge.sh > /tmp/bar.raw; tail -f /dev/null"
 python3 docs/demo/tmux2ansi.py < /tmp/bar.raw > /tmp/bar.ansi
 docs/demo/render.sh /tmp/bar.ansi docs/statusbar.png 17
 
-tmux -L shotdemo kill-server && rm -rf /private/tmp/shotroom
+tmux -L shotdemo -f /dev/null kill-server && rm -rf /private/tmp/shotroom
 ```
 
 ## 诚实边界
@@ -33,9 +33,10 @@ tmux -L shotdemo kill-server && rm -rf /private/tmp/shotroom
    ~90 列的列表才不截 header,整张图就得 225 列宽,缩到 README 的 960px 之后字就糊了。
    除了分栏比例,图上其它一切都是默认行为。
 
-1. **数据是编的。** 九个 pane、时长、额度百分比、token 数全是 `stage-demo.sh` 里的
-   fixture,不是谁的真实工作状态。选的这九个刚好把四个状态、老化变暗的 DONE、以及一条
-   `⏸ WAIT` 全覆盖一遍。**布局是真的** —— 每一个字符都是 `list-rows.sh` /
+1. **数据是编的。** 22 个 pane、时长、额度百分比、token 数全是 `stage-demo.sh` 里的
+   fixture,不是谁的真实工作状态。这 22 个的配比是刻意排的:四个状态、老化变暗的 DONE、
+   一条 `⏸ WAIT` 全覆盖,而且默认收起之后正好剩 9 行 —— 图要讲的就是「追踪 22 个,
+   只让你看 9 个」。**布局是真的** —— 每一个字符都是 `list-rows.sh` /
    `status-badge.sh` / `fzf` 自己画出来的,所以图上对齐了就是真的对齐了。
    (事实上正是这个流程逼出了两个真 bug:窗口名不截断、以及年龄列正好 15 格时把后面整列
    顶出去一格。)

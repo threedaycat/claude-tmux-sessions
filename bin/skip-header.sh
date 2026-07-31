@@ -8,7 +8,8 @@
 # pane row). The current mode lives in $MODE_FILE, created/exported by
 # claude-tmux-picker.sh for this picker instance.
 # args: $1 = current 0-based item index ({n}),
-#       $2 = direction (up/down/init/left/right/slash/quit/esc)
+#       $2 = direction (up/down/init/left/right/slash/preview/
+#            showall/digit/quit/esc)
 #       $3 = the literal key that fired this (j/k/h/l/…), if it was a
 #            printable one
 #
@@ -33,7 +34,7 @@ cur="${1:-0}"
 dir="${2:-down}"
 key="${3:-}"
 
-PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 SESSION_HEADER='j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
 SEARCH_HEADER='输入过滤 · Enter 跳转 · Esc 返回 j/k 导航'
 
@@ -80,6 +81,22 @@ case "$dir" in
     echo "show-input+enable-search+change-header($SEARCH_HEADER)"
     exit 0
     ;;
+  showall)
+    # Flip collapsed/expanded and reload. The state has to live in a file
+    # for the same reason the cursor mode does: every keypress is a separate
+    # process. list-rows.sh reads it via CLAUDE_TMUX_SHOW_ALL_FILE, so the
+    # reload re-renders with the quiet panes shown (or hidden) — and because
+    # numbers are assigned before the visibility test, nothing renumbers.
+    if [ -n "${SHOW_ALL_FILE:-}" ]; then
+      if [ "$(cat "$SHOW_ALL_FILE" 2>/dev/null)" = "1" ]; then
+        printf '0' > "$SHOW_ALL_FILE"
+      else
+        printf '1' > "$SHOW_ALL_FILE"
+      fi
+    fi
+    echo "reload($BIN_DIR/list-rows.sh | tee '${ROWS_FILE:-/dev/null}')"
+    exit 0
+    ;;
   preview)
     # Collapse the preview entirely so the list gets the full width — with
     # a dozen-plus panes, scanning names/cwds beats seeing one pane's
@@ -115,17 +132,27 @@ if [ "$dir" = "digit" ]; then
   pend=""
   [ -n "${PENDING_FILE:-}" ] && [ -s "$PENDING_FILE" ] && pend="$(cat "$PENDING_FILE")"
   n=$((10#${pend}${key}))                       # digits so far, as a number
-  total_panes=$(printf '%s\n' "$rows" | awk -F'\t' '$2 != "" { c++ } END { print c + 0 }')
-  line=$(printf '%s\n' "$rows" \
-    | awk -F'\t' -v n="$n" '$2 != "" { c++; if (c == n) { print NR; exit } }')
-  if [ "$n" -ge 1 ] && [ -n "$line" ]; then
-    if [ $(( n * 10 )) -gt "$total_panes" ]; then
-      if [ -n "${PENDING_FILE:-}" ]; then : > "$PENDING_FILE" 2>/dev/null || true; fi
-      echo "pos($line)+accept"                  # can't be extended — jump now
-    else
-      if [ -n "${PENDING_FILE:-}" ]; then printf '%s' "$n" > "$PENDING_FILE"; fi
-      echo "pos($line)"                          # could take another digit — park & wait
-    fi
+  # Match against the row number list-rows.sh puts in field 4, rather than
+  # counting pane rows: collapsing the quiet panes keeps every number
+  # attached to its pane, which makes the *visible* numbers sparse (1, 4,
+  # 7, 12…). "Nth pane row" would land on the wrong pane the moment
+  # anything is hidden.
+  line=$(printf '%s\n' "$rows" | awk -F'\t' -v n="$n" '$4 == n { print NR; exit }')
+  # Likewise "can these digits still be extended" is no longer n*10 <=
+  # total: with gaps, what matters is whether any visible number starts
+  # with what's typed so far and is longer.
+  extendable=$(printf '%s\n' "$rows" \
+    | awk -F'\t' -v p="$n" '$4 != "" && length($4) > length(p) && index($4, p) == 1 { c++ } END { print c + 0 }')
+  if [ "$n" -ge 1 ] && [ "$extendable" -gt 0 ]; then
+    # More digits could still follow, so hold the prefix. If it also names a
+    # visible row, park the cursor there as a preview of what Enter takes;
+    # if it doesn't (its own row is collapsed, e.g. 1 while only 10-15 show)
+    # just wait — dropping the prefix here would make 12 unreachable.
+    if [ -n "${PENDING_FILE:-}" ]; then printf '%s' "$n" > "$PENDING_FILE"; fi
+    if [ -n "$line" ]; then echo "pos($line)"; else echo "ignore"; fi
+  elif [ "$n" -ge 1 ] && [ -n "$line" ]; then
+    if [ -n "${PENDING_FILE:-}" ]; then : > "$PENDING_FILE" 2>/dev/null || true; fi
+    echo "pos($line)+accept"                    # can't be extended — jump now
   else
     echo "ignore"                                # 0, or out of range — keep any pending prefix
   fi

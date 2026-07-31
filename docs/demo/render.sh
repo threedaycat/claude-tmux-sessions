@@ -10,7 +10,10 @@ IN="${1:?input .ansi}"
 OUT="${2:?output .png}"
 FONT="${3:-15}"
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-HTML="${OUT%.png}.html"
+# Keep the intermediate HTML out of the output directory — docs/ is
+# committed, and a stray picker.html next to picker.png just invites someone
+# to wonder whether it's part of the docs.
+HTML="${TMPDIR:-/tmp}/$(basename "${OUT%.png}").html"
 
 read -r W H <<<"$(python3 "$DIR/ansi2html.py" "$IN" "$HTML" "$FONT")"
 

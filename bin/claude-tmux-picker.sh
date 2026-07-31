@@ -28,6 +28,16 @@ if [ ! -s "$STATUS_FILE" ]; then
   exit 0
 fi
 
+# Collapsed/expanded state for the quiet panes (READ and aged-out DONE),
+# toggled by `a`. Per picker instance and read by list-rows.sh through
+# CLAUDE_TMUX_SHOW_ALL_FILE, so the toggle survives fzf's reload without
+# leaking into your next picker — the default is what you set globally via
+# CLAUDE_TMUX_SHOW_ALL, not whatever you last pressed.
+SHOW_ALL_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-showall.XXXXXX")"
+export SHOW_ALL_FILE
+export CLAUDE_TMUX_SHOW_ALL_FILE="$SHOW_ALL_FILE"
+if [ "${CLAUDE_TMUX_SHOW_ALL:-}" = "1" ]; then printf '1' > "$SHOW_ALL_FILE"; else printf '0' > "$SHOW_ALL_FILE"; fi
+
 rows="$("$BIN_DIR/list-rows.sh")"
 
 if [ -z "$rows" ]; then
@@ -66,7 +76,7 @@ printf '%s\n' "$rows" > "$ROWS_FILE"
 PENDING_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-pending.XXXXXX")"
 export PENDING_FILE
 
-trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE"' EXIT
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE"' EXIT
 
 # Starts with search disabled AND the input line hidden (--disabled
 # --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
@@ -76,7 +86,7 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE"' EXIT
 # navigation) — all dispatched through skip-header.sh, which branches on
 # FZF_INPUT_STATE (hidden in navigation, enabled while searching).
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
-  --header='j/k 选窗口 · 数字直跳 · h session · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+  --header='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3}"
   --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-60}%,border-left,wrap,follow"
@@ -90,6 +100,7 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --bind "h:transform:$BIN_DIR/skip-header.sh {n} left h"
   --bind "l:transform:$BIN_DIR/skip-header.sh {n} right l"
   --bind "/:transform:$BIN_DIR/skip-header.sh {n} slash /"
+  --bind "a:transform:$BIN_DIR/skip-header.sh {n} showall a"
   --bind "p:transform:$BIN_DIR/skip-header.sh {n} preview p"
   --bind "q:transform:$BIN_DIR/skip-header.sh {n} quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh {n} esc"

@@ -20,12 +20,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/picker.png" alt="picker:三个 session、九个 pane,其中一个卡在权限确认上,右侧是高亮 pane 的实时画面" width="960">
+  <img src="docs/picker.png" alt="picker:五个 session 里追踪着 22 个 pane,收起后只剩 9 个要你处理的,其中一个卡在权限确认上,右侧是高亮 pane 的实时画面" width="960">
 </p>
 
 <p align="center">
-  <sub><code>prefix + g</code>。由真实脚本渲染,数据是演示 fixture ——
-  见 <a href="docs/demo/">docs/demo</a>。</sub>
+  <sub><code>prefix + g</code> —— 追踪着 22 个 pane,收起后只剩 9 个要你处理的。
+  由真实脚本渲染,数据是演示 fixture,见 <a href="docs/demo/">docs/demo</a>。</sub>
 </p>
 
 每一行都有编号 —— 按 `5`,直接落到第 5 行。光标默认停在你当前所在的那个 pane,右侧则是
@@ -75,6 +75,10 @@
 - **它是收件箱,不是仪表盘。** 访问过的 `DONE` 会自动标记为 `READ`,`ctrl-x` 可以把不关心的
   归档掉。这两个标记都会在那个 pane **下次真的做了新事情**时自动失效 —— 所以列表能自己
   保持简短,不需要你去维护。
+- **开到几十上百个也装得下。** 安静的那些 —— `READ`,以及几小时都没去看的未读 `DONE` ——
+  **默认收起**,只留下真的要你处理的。session 表头里本来就有它们的计数,所以那些数字顺理
+  成章变成"这里收了几个",后面跟一个 `⋯` 提示还有东西。按 `a` 全部展开。行号是在收起
+  **之前**就分配好的,所以切换显示时没有任何 pane 的号会变 —— 代价只是可见的号会跳。
 - **session 模式。** `h` 把光标切到 session 标题行,预览随之变成该 session 下每个 pane 的
   一张卡片:任务行、模型、上下文用量条,以及 Claude 最后一次回复的摘录 —— 都是从各自的
   transcript 读的,不是从屏幕上刮的。一眼回答"大家都在干什么"。
@@ -165,6 +169,8 @@ rm -f ~/.claude/tmux-claude-status.json ~/.claude/tmux-claude-restore.json ~/.cl
   Claude pane,预览跟着走。
 - **行号**直接跳过去。`/` 切换成按名字搜索(`Esc` 回到导航模式)。
 - `h` / `←` 进入 session 模式;`l` / `→` 退出。
+- `a` 在"只看要我处理的"(默认)和"全部 pane"之间切换。想每次都直接展开就设
+  `CLAUDE_TMUX_SHOW_ALL=1`。你当前所在的那个 pane 永远不会被收起,即使它是安静的那类。
 - `p` 收起预览,把整个宽度让给列表 —— 追踪十几个 pane、想扫一眼名字和路径的时候值得。再按
   一次把预览叫回来,或者用 `CLAUDE_TMUX_PREVIEW_WIDTH`(默认 `60`,百分比)改默认的分栏比例。
 - `Enter` 跳转 · `ctrl-x` 归档当前高亮的 pane · `q` / `Esc` 关闭。

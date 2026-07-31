@@ -17,13 +17,16 @@ BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
 [ -s "$STATUS_FILE" ] || exit 0
 
-# Fields (tab-separated): display, pane_id, session_name
+# Fields (tab-separated): display, pane_id, session_name, row_number
 # `display` is fully pre-formatted/padded/colored below (CJK-width aware)
 # and is the only field fzf shows (--with-nth=1). Header rows (one per
 # session) have an empty pane_id field; pane rows carry their tmux pane
 # id. Both carry the session name, so Enter on a header (session-select
 # mode) knows where to jump and the preview can show the session's active
-# pane. Archived panes are omitted entirely.
+# pane. `row_number` repeats the gutter number as plain text so
+# skip-header.sh can resolve a typed number without parsing ANSI back out
+# of `display` — it matters because collapsing makes the numbers sparse.
+# Archived panes are omitted entirely.
 python3 - "$STATUS_FILE" <<'PYEOF'
 import json, os, sys, subprocess, time, unicodedata
 from collections import defaultdict
@@ -203,6 +206,29 @@ for pane, e in data.items():
 
 sessions_sorted = sorted(by_session.keys(), key=lambda s: session_order.get(s, 1 << 30))
 
+# Collapsing the quiet ones. With a dozen panes the list fits; with 24 it
+# doesn't, and the ones you scroll past are always the same two kinds: READ
+# (rank 3 — you've already looked) and aged-out unread DONE (rank 4 — you
+# haven't looked in hours, so it isn't urgent). Those collapse by default;
+# WAIT/RUN/unread-DONE are never hidden, because those are the whole point.
+# `a` in the picker toggles (via SHOW_ALL_FILE, written per picker instance
+# the same way MODE_FILE is); CLAUDE_TMUX_SHOW_ALL=1 restores the old
+# always-everything behaviour as the default.
+HIDDEN_RANKS = (3, 4)
+# The pane you're standing in is never collapsed, even when it's a quiet one
+# (it usually is — visiting a pane is what marks it READ). Opening the picker
+# and not finding yourself in the list is disorienting, and it's also where
+# the cursor wants to start.
+caller = os.environ.get("CALLER_PANE", "")
+show_all = os.environ.get("CLAUDE_TMUX_SHOW_ALL") == "1"
+show_all_file = os.environ.get("CLAUDE_TMUX_SHOW_ALL_FILE")
+if show_all_file:
+    try:
+        with open(show_all_file) as f:
+            show_all = f.read().strip() == "1"
+    except OSError:
+        pass
+
 row_num = 0  # global 1-based pane-row counter (the digit-jump number)
 for s in sessions_sorted:
     entries = sorted(by_session[s], key=lambda x: x[0])   # by tmux window.pane
@@ -229,6 +255,13 @@ for s in sessions_sorted:
         )
         if n
     )
+    # The "how many are collapsed" indicator costs nothing to build: the two
+    # counts that were already in this header, ✓ (READ) and dim ✔ (aged out),
+    # ARE the hidden ones. So a trailing ⋯ is the only new pixel — it says
+    # "there is more behind this header, press a".
+    hidden_here = sum(1 for _seq, rank, *_ in entries if rank in HIDDEN_RANKS)
+    if hidden_here and not show_all:
+        counts += "  \033[2m⋯\033[0m"
     header = (
         "\033[1;36m" + pad(f"▾ {sid_label}{s}", 22) + "\033[0m" + counts
     )
@@ -241,12 +274,19 @@ for s in sessions_sorted:
     # doing" is the first thing you scan for — with the status right
     # after it.
     for _seq, rank, pane, label, age, wname, cwd in entries:
+        # Numbered BEFORE the visibility test, on purpose: a pane's number
+        # must not change when you collapse or expand the list, or the number
+        # you learned is a lie the moment you press `a`. The cost is that
+        # visible numbers go sparse (1, 4, 7, 12…), which is why
+        # skip-header.sh matches the digits you type against the number in
+        # field 4 rather than counting pane rows.
         row_num += 1
-        # Dim number gutter (6 visible cols, same indent pane rows always
-        # had) — the digit you press to jump straight here (1-9; press / to
-        # search for the rest). Global top-to-bottom, so it matches the
-        # Nth-pane-row count skip-header.sh uses for pos()+accept.
-        num = f"  \033[2m{row_num:>2}\033[0m  "
+        if rank in HIDDEN_RANKS and not show_all and pane != caller:
+            continue
+        # Dim number gutter — the digits you press to jump straight here.
+        # Three wide, not two: with 100 panes a 2-wide field silently drops
+        # the leading digit *and* shifts every column on that row.
+        num = f"  \033[2m{row_num:>3}\033[0m  "
         if rank == 4:
             # Aged-out unread DONE: build the row from plain text and dim
             # the whole thing in one wrap (no embedded colour codes that
@@ -254,7 +294,7 @@ for s in sessions_sorted:
             # selectable. "✔ DONE  " matches the icon+label width above.
             body = ("✔︎ DONE  " + col(wname, NAME_W)
                     + col(fmt_age(1, age), AGE_W) + tilde(cwd))
-            display = f"  \033[2m{row_num:>2}  " + body + "\033[0m"
+            display = f"  \033[2m{row_num:>3}  " + body + "\033[0m"
         else:
             display = (
                 num
@@ -264,5 +304,5 @@ for s in sessions_sorted:
                 + col(fmt_age(rank, age), AGE_W)
                 + "\033[2m" + tilde(cwd) + "\033[0m"
             )
-        print(f"{display}\t{pane}\t{s}")
+        print(f"{display}\t{pane}\t{s}\t{row_num}")
 PYEOF

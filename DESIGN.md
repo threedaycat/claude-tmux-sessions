@@ -131,8 +131,11 @@ header row per session, followed by its panes.
 - **Panes within a session** are ordered by their tmux `window.pane` index, so
   the picker mirrors the order you see in tmux itself — and it lines up with the
   digit-jump numbers.
-- Each pane row leads with a **dim global number** (1, 2, 3… top to bottom
-  across all sessions) — the number you press to jump. Then the state
+- Each pane row leads with a **dim global number**, three columns wide (100+
+  panes is the design target, and a 2-wide field would both drop the leading
+  digit and shift that row's columns), counted top to bottom across all
+  sessions — the number you press to jump. Collapsed rows keep their numbers, so
+  the visible ones can skip. Then the state
   icon+label, the window name ("what is this one doing" is what you scan for
   first), a **status-aware elapsed phrase** in human units (`已运行 / 等确认 /
   完成 X前` — seconds under a minute, then minutes, then hours; `updated_at` is
@@ -142,6 +145,29 @@ header row per session, followed by its panes.
 - **Session headers** carry the same icon+colour counts as the rows below them
   (`⏸ N`, `✔ N`, `▶ N`, `✓ N`, dim `✔` = aged-out), most-important-first, zeros
   omitted.
+
+### Collapsing the quiet ones
+
+A dozen panes fit on a screen. Two dozen don't, and a hundred is the stated
+target — so the list has to stay proportional to *what needs you*, not to how
+many sessions exist. The two ranks that are safe to hide are already defined:
+`READ` (rank 3 — you've looked) and aged-out unread `DONE` (rank 4 — you haven't
+looked in hours, so it isn't urgent). Those collapse by default; WAIT, RUN and
+unread DONE are never hidden, because they're the entire point of the tool.
+`a` toggles, `CLAUDE_TMUX_SHOW_ALL=1` changes the default, and the pane you're
+standing in is never collapsed (visiting a pane is what marks it READ, so it
+usually qualifies — and not finding yourself in the list is disorienting).
+
+No new UI was needed for "how many are hidden": those two header counts *are*
+the hidden ones, so they change meaning for free. The only addition is a
+trailing dim `⋯` saying there's more behind this header. A session whose panes
+are all collapsed keeps its header, so a 24-pane fleet reads as a handful of
+session lines plus the few rows that want you.
+
+**Numbers are assigned before the visibility test**, which is the one
+load-bearing decision here: a number that changed when you pressed `a` would
+be worse than no number at all. The cost is that visible numbers go sparse
+(1, 4, 7, 12…), and that ripples into the digit jump — see below.
 
 ### Two cursor modes, one list
 
@@ -165,6 +191,24 @@ key:
   waits: press the next digit to complete it, or Enter to take the parked row.
   A per-instance `PENDING_FILE` holds the digits so far, cleared by any non-digit
   key and once a jump fires.
+
+  Collapsing made this fiddlier, and it's the only part of the feature with real
+  room to be wrong. Numbers are now sparse, so "the Nth pane row" would land on
+  the wrong pane — the digits you type are matched against a **fourth
+  tab-separated field** carrying the row number as plain text (fzf only displays
+  field 1, so the extra field is free, and it beats parsing ANSI back out of the
+  rendered row). "Can this prefix still be extended" likewise stops being
+  `n*10 <= total` and becomes "does any visible number start with these digits
+  and run longer". One consequence needs handling explicitly: a prefix whose own
+  row is collapsed (`1` while only 10-15 are visible) matches nothing, and
+  dropping it there would make 12 unreachable — so an extendable prefix is held
+  even when it has no row to park on.
+
+- **`a` toggles collapsed/expanded** — writes a per-instance `SHOW_ALL_FILE` that
+  `list-rows.sh` reads via `CLAUDE_TMUX_SHOW_ALL_FILE`, then `reload()`s through
+  the same `tee` that keeps the row cache fresh, exactly like `ctrl-x`. The file
+  is created before the first render, so the initial list and every reload agree
+  on one source of truth.
 - **`p` toggles the preview off entirely** (fzf's `toggle-preview`), handing the
   list the full width — which is the right answer to "the list is too cramped",
   because narrowing the split isn't: it was tried at

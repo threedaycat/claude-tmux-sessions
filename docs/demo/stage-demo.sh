@@ -14,9 +14,13 @@ set -euo pipefail
 
 SRV="shotdemo"
 H="/private/tmp/shotroom"
-COLS=164
-ROWS=22
-SOCK=(-L "$SRV")
+COLS=174
+ROWS=26
+# -f /dev/null: the demo server must not read ~/.tmux.conf. Someone else's
+# config would change what the screenshot looks like (and mine set a window
+# index that collided with the fixture's), which defeats the whole point of
+# generating the image instead of taking one.
+SOCK=(-L "$SRV" -f /dev/null)
 
 rm -rf "$H"
 mkdir -p "$H"/.claude/projects/demo "$H"/repos/{api,infra} "$H"/notes "$H"/side/{prototype,translate}
@@ -76,7 +80,12 @@ new_win() { # session window_name cwd frame
   if ! tmux "${SOCK[@]}" has-session -t "$s" 2>/dev/null; then
     tmux "${SOCK[@]}" new-session -d -s "$s" -n "$w" -x "$COLS" -y "$ROWS" -c "$d" "$cmd"
   else
-    tmux "${SOCK[@]}" new-window -d -t "$s" -n "$w" -c "$d" "$cmd"
+    # "$s:" (trailing colon) means "this session, next free index". Bare
+    # "$s" is a *target-window* spec, so once a window elsewhere shares a
+    # name with a session — the fixture has both a `notes` session and a
+    # `notes` window — tmux resolves it to that window's index and refuses
+    # with "index N in use".
+    tmux "${SOCK[@]}" new-window -d -t "$s:" -n "$w" -c "$d" "$cmd"
   fi
 }
 
@@ -85,15 +94,28 @@ new_win() { # session window_name cwd frame
 # sample list quotes.
 tmux "${SOCK[@]}" new-session -d -s _burn -x "$COLS" -y "$ROWS" "tail -f /dev/null"
 
-new_win work    api-refactor       "$H/repos/api"        frame-api.txt
-new_win work    scratch            "$H/repos/api"        frame-plain.txt
-new_win work    notes              "$H"                  frame-plain.txt
-new_win journal deploy-script      "$H/repos/infra"      frame-plain.txt
-new_win journal migrate-db         "$H/repos/api"        frame-plain.txt
-new_win journal weekly-digest      "$H/notes"            frame-plain.txt
-new_win journal remote-debug       "$H/repos/api"        frame-plain.txt
-new_win side    prototype-redesign "$H/side/prototype"   frame-plain.txt
-new_win side    translate-dev      "$H/side/translate"   frame-plain.txt
+new_win work    api-refactor        "$H/repos/api" frame-api.txt
+new_win work    paging-helper       "$H/repos/api" frame-plain.txt
+new_win work    scratch             "$H/repos/api" frame-plain.txt
+new_win work    notes               "$H" frame-plain.txt
+new_win work    lint-fix            "$H/repos/api" frame-plain.txt
+new_win work    typecheck           "$H/repos/api" frame-plain.txt
+new_win infra   deploy-script       "$H/repos/infra" frame-plain.txt
+new_win infra   migrate-db          "$H/repos/api" frame-plain.txt
+new_win infra   terraform-plan      "$H/repos/infra" frame-plain.txt
+new_win infra   log-triage          "$H/repos/infra" frame-plain.txt
+new_win infra   dns-cutover         "$H/repos/infra" frame-plain.txt
+new_win web     prototype-redesign  "$H/side/prototype" frame-plain.txt
+new_win web     a11y-audit          "$H/side/prototype" frame-plain.txt
+new_win web     i18n-pass           "$H/side/prototype" frame-plain.txt
+new_win web     bundle-size         "$H/side/prototype" frame-plain.txt
+new_win web     storybook           "$H/side/prototype" frame-plain.txt
+new_win docs    translate-dev       "$H/side/translate" frame-plain.txt
+new_win docs    changelog           "$H/notes" frame-plain.txt
+new_win docs    api-reference       "$H/notes" frame-plain.txt
+new_win notes   weekly-digest       "$H/notes" frame-plain.txt
+new_win notes   journal             "$H/notes" frame-plain.txt
+new_win notes   reading-list        "$H/notes" frame-plain.txt
 
 # allow-rename off: Claude Code drives the window title in real use, but
 # here the names *are* the fixture, so nothing may overwrite them.
@@ -120,15 +142,28 @@ HOUR = 3600
 # Ages chosen to exercise every state at once, including the aged-out DONE
 # (>2h unread — dims and sinks) and a WAIT that is only 12s old.
 fixture = [
-    ("work",    "api-refactor",       "running", 60,          False),
-    ("work",    "scratch",            "done",    44.7 * HOUR, True),
-    ("work",    "notes",              "done",    43.6 * HOUR, True),
-    ("journal", "deploy-script",      "blocked", 12,          False),
-    ("journal", "migrate-db",         "done",    16,          False),
-    ("journal", "weekly-digest",      "done",    16 * 60,     False),
-    ("journal", "remote-debug",       "done",    2.2 * HOUR,  True),
-    ("side",    "prototype-redesign", "done",    27.4 * HOUR, False),
-    ("side",    "translate-dev",      "done",    3 * HOUR,    True),
+    ("work",   "api-refactor",       "running", 60,          False),
+    ("work",   "paging-helper",      "done",    16,          False),
+    ("work",   "scratch",            "done",    160920,      True),
+    ("work",   "notes",              "done",    156960,      True),
+    ("work",   "lint-fix",           "done",    98640,       False),
+    ("work",   "typecheck",          "done",    18000,       True),
+    ("infra",  "deploy-script",      "blocked", 12,          False),
+    ("infra",  "migrate-db",         "done",    960,         False),
+    ("infra",  "terraform-plan",     "done",    10800,       True),
+    ("infra",  "log-triage",         "done",    111600,      False),
+    ("infra",  "dns-cutover",        "running", 240,         False),
+    ("web",    "prototype-redesign", "done",    120,         False),
+    ("web",    "a11y-audit",         "done",    28800,       True),
+    ("web",    "i18n-pass",          "done",    93600,       True),
+    ("web",    "bundle-size",        "running", 39,          False),
+    ("web",    "storybook",          "done",    180000,      False),
+    ("docs",   "translate-dev",      "done",    147600,      True),
+    ("docs",   "changelog",          "done",    540,         False),
+    ("docs",   "api-reference",      "done",    68400,       True),
+    ("notes",  "weekly-digest",      "done",    960,         False),
+    ("notes",  "journal",            "done",    57600,       True),
+    ("notes",  "reading-list",       "done",    118800,      False),
 ]
 data = {}
 for s, w, status, ago, read in fixture:
