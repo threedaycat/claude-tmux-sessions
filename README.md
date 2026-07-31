@@ -21,12 +21,13 @@
 </p>
 
 <p align="center">
-  <img src="docs/picker.png" alt="The picker: three sessions, nine panes, one blocked on a permission prompt, with a live preview of the highlighted pane" width="960">
+  <img src="docs/picker.png" alt="The picker: 22 tracked panes across five sessions, collapsed to the nine that want attention, one of them blocked on a permission prompt, with a live preview of the highlighted pane" width="960">
 </p>
 
 <p align="center">
-  <sub><code>prefix + g</code>. Rendered by the real scripts against a demo
-  fixture — see <a href="docs/demo/">docs/demo</a>.</sub>
+  <sub><code>prefix + g</code> — 22 tracked panes, collapsed to the nine that
+  want you. Rendered by the real scripts against a demo fixture, see
+  <a href="docs/demo/">docs/demo</a>.</sub>
 </p>
 
 Every row is numbered — press `5`, land on pane 5. The cursor starts on the pane
@@ -86,6 +87,12 @@ means you can read the list without relying on it.
 - **An inbox, not a dashboard.** Visiting a `DONE` pane marks it `READ`; `ctrl-x`
   archives ones you don't care about. Both come back on their own the next time
   that pane does something new — so the list stays short without you curating it.
+- **Scales past a screenful.** The quiet panes — `READ`, and unread `DONE` you
+  haven't touched in hours — **collapse by default**, leaving only what's
+  actionable. Each session header already counted them, so those counts double as
+  "how many are hidden here", with a `⋯` to say there's more. `a` expands
+  everything. Row numbers are assigned *before* collapsing, so a pane's number
+  never changes when you toggle — it just means visible numbers can skip.
 - **Session mode.** `h` flips the cursor to session headers, and the preview
   becomes one card per pane in that session: its task line, model, context-window
   meter, and a quote of Claude's last reply — read from each pane's transcript,
@@ -188,6 +195,9 @@ Then remove the four `tmux_status_update.py` hook entries from
 - **A row number** jumps straight there. `/` switches to search-by-name instead
   (`Esc` returns to navigation).
 - `h` / `←` enters session mode; `l` / `→` leaves it.
+- `a` toggles between "only what needs me" (the default) and every tracked pane.
+  Set `CLAUDE_TMUX_SHOW_ALL=1` if you'd rather always start expanded. The pane
+  you're currently in is never collapsed, even when it's a quiet one.
 - `p` collapses the preview so the list gets the full width — worth it once
   you're tracking a dozen-plus panes and want to scan names and paths. Press it
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
