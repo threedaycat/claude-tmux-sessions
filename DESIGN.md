@@ -386,6 +386,69 @@ to `~/.claude/tmux-quota-cache.json` and fall back to it (muted grey bar + a `~`
 "last known" marker) until fresh data returns, so the segment never just blinks
 out. A quiet `5h ░░░░░░░░░░ ?` placeholder shows only when there's no data at all.
 
+## The token page (`t`)
+
+The footer answers "how much quota is left". The token page answers the next
+question — **where did it go** — over the whole fleet rather than one pane:
+`bin/token-report.py` builds it, `bin/token-page.sh` owns the screen, `t` opens
+it, `q` leaves.
+
+**Two blocks, in the order the question gets asked.** An overview of the window
+(turns, and the four token classes as share bars), then a per-session ranking.
+Only the second one is actionable: with two dozen Claudes running, "today cost a
+lot" isn't news — "*this* one costs a lot" is.
+
+**Why the ranking is sorted by tokens read in, and why `均/轮` is its own
+highlighted column.** Cost is roughly turns × the context each turn carried, and
+~98% of the tokens are cache *reads* — re-sending context that already exists. So
+turn count misjudges badly: on the day this was built a session with 203 turns
+outranked one with 493, because every one of those turns hauled ~500k of context
+against the other's ~226k. Mean context per turn is the driver, and it's the one
+number that explains *why* a session is expensive rather than just that it is.
+
+**One API response is several transcript lines, and every one of them repeats the
+same `usage` block.** A reply containing thinking + text + two tool calls is
+written as four lines, all carrying the same `message.id` and the same token
+counts. Counting per line inflates the totals — measured on one day's transcripts,
+same instant, same filter: 4,906 lines vs 2,660 actual responses (1.84×), and
+1.29B vs 713M cache-read tokens (1.80×). So responses are counted once, keyed by
+`message.id` (the same dedup `usage-footer.sh` already does). This is the one
+number to be suspicious of when comparing against a hand-rolled `jq` pass; a
+plain per-line sum is nearly double.
+
+**Cost control on a 300 MB transcript directory.** Files are streamed line by
+line, never read whole; a file whose mtime predates the window is skipped
+entirely (it cannot contain a line inside the window); and lines are filtered on
+the `"usage"` substring before paying for `json.loads`, since most lines are user
+turns and tool results. Today's report over 43 files: ~0.5s.
+
+**A session's project is its *last* `cwd`, not its first.** Long sessions move
+between directories, and taking the first one made the same session show a
+different project in the today and 7-day views — the more recent directory is
+also the better answer to "what is this one working on".
+
+**Why `t` can't be dispatched the way every other key is.** Every other binding
+routes through `skip-header.sh`, which prints an action for fzf to run. That
+output goes through the same parser as the `--listen` HTTP payload, and that
+parser refuses `execute()` as remote code execution — fzf drops it silently, so
+the key simply did nothing. The `execute()` is therefore bound directly on the
+key, and the transform is kept for its other job: while the search input is open,
+`t` has to type a `t`. `token-page.sh` reads `$FZF_INPUT_STATE` (fzf exports it
+to every child) and returns immediately in that state. The page needs none of the
+cursor-carrying that `a` and `ctrl-x` do: it reloads nothing, so fzf redraws the
+list exactly as it was.
+
+**A read-key loop, not a second fzf.** Nothing on the page is selectable, so
+nesting fzf inside fzf's `execute()` would only mean two sets of bindings
+fighting over `j`/`k`. `1` / `7` switch the window in place; every other key is
+ignored, so a stray keypress can't drop you out by accident. The keystroke is
+read from `/dev/tty` explicitly — a child of `execute()` inherits the picker's
+row pipe on stdin, and a plain `read` would hit EOF instantly and flash the page
+past. Terminal size comes from `stty size < /dev/tty` rather than `tput`: inside
+command substitution tput's stdout is a pipe, so ncurses asks stderr instead, and
+with stderr redirected it finds no terminal and reports the terminfo default
+24×80 — which sized the page for a third of the real screen.
+
 ## Surviving a tmux crash (tmux-resurrect integration)
 
 [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) brings back your
