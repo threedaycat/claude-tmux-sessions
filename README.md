@@ -16,9 +16,14 @@
   <img alt="Claude Code hooks" src="https://img.shields.io/badge/Claude%20Code-hooks-D97757.svg">
 </p>
 
+<p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
 <!--
   DEMO GIF: drop a recording at docs/demo.gif and uncomment this line —
   it's the single highest-value thing this README is missing.
+
   <p align="center"><img src="docs/demo.gif" alt="prefix+g opens the picker; j/k moves; Enter jumps" width="820"></p>
   ~10s: prefix+g → list appears → j/k down two panes (preview follows) → Enter.
 -->
