@@ -8,7 +8,7 @@
 # pane row). The current mode lives in $MODE_FILE, created/exported by
 # claude-tmux-picker.sh for this picker instance.
 # args: $1 = current 0-based item index ({n}),
-#       $2 = direction (up/down/init/left/right/slash/preview/
+#       $2 = direction (up/down/init/left/right/slash/preview/tokens/
 #            showall/digit/quit/esc)
 #       $3 = the literal key that fired this (j/k/h/l/…), if it was a
 #            printable one
@@ -34,7 +34,7 @@ cur="${1:-0}"
 dir="${2:-down}"
 key="${3:-}"
 
-PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 SESSION_HEADER='j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
 SEARCH_HEADER='输入过滤 · Enter 跳转 · Esc 返回 j/k 导航'
 
@@ -196,6 +196,18 @@ case "$dir" in
         2>/dev/null || true
     fi
     reload_keeping_place after
+    exit 0
+    ;;
+  tokens)
+    # `t`. The page itself is opened by an execute() bound directly on the
+    # key in claude-tmux-picker.sh — an execute printed from here would be
+    # discarded, since transform output is parsed as a --listen payload
+    # and that parser treats execute as remote code execution. All this
+    # branch still owns is the search-mode case, handled above (`put(t)`);
+    # in navigation mode there is nothing left to change about the list.
+    # The page needs no cursor carrying: it doesn't reload anything, so
+    # fzf redraws the list exactly as it was.
+    echo "ignore"
     exit 0
     ;;
   preview)

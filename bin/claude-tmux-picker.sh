@@ -89,7 +89,7 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${INIT_F
 # navigation) — all dispatched through skip-header.sh, which branches on
 # FZF_INPUT_STATE (hidden in navigation, enabled while searching).
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
-  --header='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+  --header='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
   --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,border-left,wrap,follow"
@@ -105,6 +105,15 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --bind "/:transform:$BIN_DIR/skip-header.sh {n} slash /"
   --bind "a:transform:$BIN_DIR/skip-header.sh {n} showall a"
   --bind "p:transform:$BIN_DIR/skip-header.sh {n} preview p"
+  # `t` opens the token page. Unlike every other key here, the work can't
+  # be done by the transform: actions printed by transform go through the
+  # same parser as the --listen HTTP payload, which refuses execute() as
+  # remote code execution — fzf drops it silently, so the key just did
+  # nothing. So the execute is bound directly, and the transform is kept
+  # only for its other job: while the search input is open, `t` has to
+  # type a t. token-page.sh returns immediately in that state (it reads
+  # $FZF_INPUT_STATE, which fzf exports to every child).
+  --bind "t:transform($BIN_DIR/skip-header.sh {n} tokens t)+execute($BIN_DIR/token-page.sh 1)"
   --bind "q:transform:$BIN_DIR/skip-header.sh {n} quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh {n} esc"
   --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh {n} archive"
