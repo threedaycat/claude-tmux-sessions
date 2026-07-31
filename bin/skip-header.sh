@@ -116,7 +116,13 @@ else
   rows="$("$BIN_DIR/list-rows.sh")"
 fi
 TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
-HEADER_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "") print NR }' | paste -sd, -),"
+# Three row kinds now, and the cursor treats them differently: session
+# headers (empty pane id, empty row number) stop only in session mode, pane
+# rows (a %pane id) stop only in pane mode, and the "⋯ 收起 N 个" summary
+# (empty pane id, row number "-") stops in neither — it's a label, not a
+# destination. Hence two position sets rather than one negated set.
+HEADER_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "" && $4 == "") print NR }' | paste -sd, -),"
+PANE_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 != "") print NR }' | paste -sd, -),"
 
 # Digit key in navigation mode: type a pane-row number (the gutter number
 # shown in each row) and jump there. A digit still jumps *instantly* the
@@ -163,12 +169,16 @@ is_header() {
   [[ "$HEADER_POS" == *",$1,"* ]]
 }
 
+is_pane() {
+  [[ "$PANE_POS" == *",$1,"* ]]
+}
+
 # Is position $1 a valid stop in the current mode?
 is_stop() {
   if [ "$mode" = "session" ]; then
     is_header "$1"
   else
-    ! is_header "$1"
+    is_pane "$1"
   fi
 }
 
