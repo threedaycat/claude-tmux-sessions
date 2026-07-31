@@ -25,7 +25,7 @@ python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
 # mode) knows where to jump and the preview can show the session's active
 # pane. Archived panes are omitted entirely.
 python3 - "$STATUS_FILE" <<'PYEOF'
-import json, sys, subprocess, time, unicodedata
+import json, os, sys, subprocess, time, unicodedata
 from collections import defaultdict
 
 status_file = sys.argv[1]
@@ -77,6 +77,65 @@ def pad(s, width):
     return s + " " * max(1, width - w)
 
 
+def clip(s, width):
+    """Truncate to `width` visual columns, marking the cut with `..`.
+
+    pad() only ever pads, which was fine until a window name arrived longer
+    than its column: Claude Code writes the *current task* into the tmux
+    window title, so names are occasionally sentence-length ("workOS✳
+    Configure desk assistant for decision logging"), and one of those used
+    to shove the time and path columns off the right edge — breaking the
+    alignment of that whole row while every other row stayed neat.
+
+    Cut from the tail: a name's first few words are what identify it. ASCII
+    `..` rather than `…`, whose East Asian width is Ambiguous and so renders
+    double in a CJK-configured terminal — precisely the misalignment being
+    fixed here."""
+    if vwidth(s) <= width:
+        return s
+    out, w, keep = "", 0, width - 2
+    for ch in s:
+        cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if w + cw > keep:
+            break
+        out += ch
+        w += cw
+    return out + ".."
+
+
+def col(s, width):
+    """One aligned column, `width` cells wide, guaranteed.
+
+    Clipping to width-1 is what makes the guarantee hold: pad() always
+    leaves a trailing separator space, so content that exactly fills the
+    field would come out one cell too wide and shove every column to its
+    right — which is how both of this list's alignment bugs happened (a
+    sentence-long window name, and `完成 27.4小时前`, which is exactly 15
+    cells). Both classes vanish if content can never reach the field width.
+
+    NAME_W/AGE_W are sized so the clip is a backstop rather than an everyday
+    event: real window names fit, and an age only reaches 16 cells once a
+    pane has been idle for 100+ hours."""
+    return pad(clip(s, width - 1), width)
+
+
+NAME_W = 24   # window name
+AGE_W = 17    # "完成 999.9小时前" is 16 cells; 17 keeps the separator
+
+
+def tilde(path):
+    """`/Users/you/repos/api` → `~/repos/api`. Every path in this list is
+    under $HOME in practice, so spelling the home prefix out on every row
+    costs ~10 columns of the one field that actually needs them — and with
+    the preview taking its share, columns are the scarce resource here."""
+    home = os.path.expanduser("~")
+    if path == home:
+        return "~"
+    if path.startswith(home + "/"):
+        return "~" + path[len(home):]
+    return path
+
+
 def fmt_age(rank, secs):
     """Say what the elapsed time *means* for this status, in human units —
     a bare '1098s前' answers neither question. updated_at is the moment
@@ -104,7 +163,7 @@ def fmt_age(rank, secs):
 # Claude finished ages ago and you never came back. It stays listed (still
 # reachable) but dimmed and sunk to the bottom (rank 4), and drops out of
 # the ambient status bar entirely. Overridable via env.
-IDLE_STALE = int(__import__("os").environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
+IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 
 # Four states, each with a distinct leading icon so it reads by shape, not
 # just colour: WAIT ⏸ (blocked — needs your choice, top priority), RUN ▶
@@ -193,16 +252,17 @@ for s in sessions_sorted:
             # the whole thing in one wrap (no embedded colour codes that
             # would reset the dim early), so it recedes but stays
             # selectable. "✔ DONE  " matches the icon+label width above.
-            body = "✔︎ DONE  " + pad(wname, 24) + pad(fmt_age(1, age), 15) + cwd
+            body = ("✔︎ DONE  " + col(wname, NAME_W)
+                    + col(fmt_age(1, age), AGE_W) + tilde(cwd))
             display = f"  \033[2m{row_num:>2}  " + body + "\033[0m"
         else:
             display = (
                 num
                 + label
                 + "  "
-                + pad(wname, 24)
-                + pad(fmt_age(rank, age), 15)
-                + "\033[2m" + cwd + "\033[0m"
+                + col(wname, NAME_W)
+                + col(fmt_age(rank, age), AGE_W)
+                + "\033[2m" + tilde(cwd) + "\033[0m"
             )
         print(f"{display}\t{pane}\t{s}")
 PYEOF

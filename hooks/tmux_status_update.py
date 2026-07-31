@@ -325,6 +325,23 @@ def prune():
             cmd_of[parts[0]] = parts[1]
 
     def apply(data):
+        # A pane id is only meaningful relative to one tmux server, and we
+        # have no way to ask "is this MY server?" — so require the file and
+        # the server to overlap by at least one pane before believing a
+        # missing id means the pane died. Without this check, running any
+        # reader while $TMUX points at a *different* server (a second server
+        # for screenshots, a nested session, a stale env var) makes every id
+        # look dead and silently wipes the whole file. Observed: it ate 20
+        # live panes' worth of state.
+        #
+        # No overlap is ambiguous — wrong server, or a tmux restart that
+        # renumbered everything — so do nothing. That's self-correcting
+        # either way: entries whose pane is absent are invisible in the UI
+        # anyway (every reader joins against list-panes), and the moment one
+        # live pane registers again there IS an overlap, so the next prune
+        # clears the corpses.
+        if data and not any(pane in cmd_of for pane in data):
+            return
         for pane in list(data):
             if pane not in cmd_of or cmd_of[pane] in SHELLS:
                 del data[pane]
