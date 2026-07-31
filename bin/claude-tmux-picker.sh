@@ -91,7 +91,7 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${INIT_F
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --header='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
   --layout=reverse --height=100%
-  --preview "$BIN_DIR/preview-row.sh {2} {3}"
+  --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
   --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,border-left,wrap,follow"
   --preview-label=' Claude 实时画面 '
   --bind "down:transform:$BIN_DIR/skip-header.sh {n} down"
@@ -140,6 +140,20 @@ fzf_args+=(--bind "load:transform:$BIN_DIR/skip-header.sh 0 init")
 chosen=$(printf '%s\n' "$rows" | fzf "${fzf_args[@]}" || true)
 
 [ -n "$chosen" ] || exit 0
+
+# Extra provider row: Enter hands off to the provider's own action, same
+# as preview did — this script still doesn't interpret the row, it just
+# routes by the "extra" marker in field 5. Runs in the foreground with the
+# popup's own TTY so a provider that prompts (e.g. "wake it up? [y/N]")
+# works normally.
+kind=$(printf '%s' "$chosen" | awk -F'\t' '{print $5}')
+if [ "$kind" = "extra" ]; then
+  item_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $6}')
+  if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; then
+    "$CLAUDE_TMUX_EXTRA_CMD" action "$item_id" || true
+  fi
+  exit 0
+fi
 
 pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
 

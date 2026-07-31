@@ -264,6 +264,82 @@ variable. The row cache matters: re-running `list-rows.sh` on every keypress
 seconds under load, so the rows are written once at startup and refreshed only
 on the `ctrl-x` reload.
 
+## External item provider
+
+The picker only knows about tmux panes. Some people want more in the same
+list — a to-do queue, review requests waiting on them, a failing build —
+without maintaining a second tool with its own keybindings to remember.
+`$CLAUDE_TMUX_EXTRA_CMD` is the seam for that, and it's designed so the
+picker never has to know what the extra rows mean.
+
+**Contract.** Point the variable at an executable; it's called three ways:
+
+| Call | Expected | On failure |
+|---|---|---|
+| `$CMD list` | one row per extra item (format below) | non-zero exit / timeout / empty output → treated as absent |
+| `$CMD preview <id>` | that item's full detail, plain text | print an error string; doesn't break the list |
+| `$CMD action <id>` | whatever Enter should do for it | non-zero exit just means nothing happened |
+
+Unset, missing, or not executable → the picker's output is byte-for-byte
+what it always was. This is a hard requirement, not a soft default: it's
+what lets someone turn the feature off by unsetting one variable, and it's
+what let a redesign of the *session* list ship without ever touching this
+seam. `run_with_deadline()` in `list-rows.sh` also caps how long the call
+can block the startup path (`$CLAUDE_TMUX_EXTRA_TIMEOUT`, default 2s) —
+a hung provider degrades to "no extra rows" instead of a stuck picker.
+
+**Row format.** Two more tab-separated fields after the four the session
+list already uses:
+
+```
+display \t (empty) \t (empty) \t (empty) \t extra \t <id>
+   $1        $2         $3         $4        $5        $6
+```
+
+`$5 == "extra"` is what tells `skip-header.sh` and `preview-row.sh` a row
+came from the provider rather than being a session header — the header
+test became `$2=="" && $4=="" && $5==""` for exactly this reason. `$6` is
+an opaque id: this script never parses it, just hands it back verbatim to
+`preview`/`action`. A provider can also emit a **label** row (`$2` and `$4`
+both empty, `$5` empty too) to print a section heading above its items;
+the cursor treats it exactly like a session header.
+
+**Where extra rows sit, and why they behave the way they do:**
+
+- They're listed *before* the session list, so "things waiting on you"
+  sorts above "which pane is running what."
+- They don't get a gutter number (`$4` stays empty). Pane numbers are
+  a stability guarantee elsewhere in this file (see "The four states" on
+  why a number must never silently point at a different pane) — an extra
+  row appearing or disappearing between polls would otherwise renumber
+  every pane below it. The trade-off is that digit-jump can't reach them;
+  `j`/`k` or `/` still can, because pane-mode navigation treats extra rows
+  as valid stops (`is_extra` alongside `is_pane`).
+- `init` (the picker's starting cursor position) skips them on purpose —
+  landing on "whatever's on top" the moment any extra rows exist would
+  change the picker's opening behavior for everyone, extra rows or not.
+  Initial focus stays on a pane; browsing to an extra row is one `j`/`k`
+  away like anything else in the list.
+- Enter on one runs `$CMD action <id>` instead of jumping anywhere.
+
+**Keeping this seam clean.** The picker's independence doesn't come from
+what it displays — it comes from not knowing what an extra row *is*. It
+sees "a line of text and an opaque id," never what kind of to-do or
+notification produced it. That's what makes the same seam usable for
+someone else's data source, and what keeps this repo shareable on its own.
+
+> **No product-, company-, or person-specific vocabulary belongs in this
+> repo's code.** If a change needs one to work, it belongs in the provider
+> script instead.
+
+Check it the same way CI would, before committing anything that touches
+`bin/` or `hooks/`:
+
+```bash
+grep -rniE '<names that would leak your setup>' bin/ hooks/ *.md docs/
+# must produce no output
+```
+
 ## The live preview
 
 Moving the selection instantly re-runs `tmux capture-pane -S -200` on the

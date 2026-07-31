@@ -17,6 +17,45 @@ BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
 [ -s "$STATUS_FILE" ] || exit 0
 
+# Optional external item provider (see DESIGN.md, "External item provider").
+# $CLAUDE_TMUX_EXTRA_CMD names an executable that contributes extra rows
+# above the session list — a to-do queue, review requests, failing builds,
+# whatever you point it at. This script knows nothing about what those rows
+# mean: to it they are a line of text plus an opaque id, which it hands back
+# when asking for a preview or running the Enter action.
+#
+# Three properties this block has to guarantee:
+#   1. Unconfigured is untouched. No variable, missing file, not executable,
+#      non-zero exit, timeout, or empty output all mean "no provider", and
+#      the output below is then byte-for-byte what it always was.
+#   2. It cannot hang the picker. This runs on the startup path, so the
+#      provider gets a hard deadline and is dropped if it overruns.
+#   3. It cannot corrupt the list. Provider output is filtered down to the
+#      two row shapes the cursor logic understands, so a buggy provider
+#      degrades to "fewer extra rows" rather than breaking navigation for
+#      the real panes.
+run_with_deadline() {  # $1 = seconds, rest = command
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
+  else "$@"
+  fi
+}
+
+if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; then
+  # Accepted shapes, and nothing else:
+  #   item   >=6 fields, field 5 == "extra", field 6 a non-empty id
+  #   label  <=4 fields, empty pane id and empty row number — a section
+  #          title; the cursor treats it exactly like a session header
+  extra="$(run_with_deadline "${CLAUDE_TMUX_EXTRA_TIMEOUT:-2}" \
+             "$CLAUDE_TMUX_EXTRA_CMD" list 2>/dev/null \
+           | awk -F'\t' '(NF>=6 && $5=="extra" && $6!="") || (NF<=4 && $2=="" && $4=="")' \
+           || true)"
+  [ -n "$extra" ] && printf '%s\n' "$extra"
+fi
+
 # Fields (tab-separated): display, pane_id, session_name, row_number
 # `display` is fully pre-formatted/padded/colored below (CJK-width aware)
 # and is the only field fzf shows (--with-nth=1). Header rows (one per
