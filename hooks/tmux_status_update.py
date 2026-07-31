@@ -132,13 +132,127 @@ def play_sound():
         pass
 
 
-def notify_blocked(session_name, pane, window_name, message):
+def _shorten(s, limit):
+    s = " ".join(str(s).split())
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _describe_tool(name, inp):
+    """One line naming what a tool call would actually do.
+
+    The tool name alone is what Claude Code's own notification already says
+    ("Claude needs your permission to use Bash") and it's the part you can
+    guess; the argument is the part you're actually deciding about. Bash
+    especially — approving `ls` and approving `rm -rf build` are not the same
+    decision, and the notification is where that difference has to show up."""
+    inp = inp if isinstance(inp, dict) else {}
+    # mcp__server__tool is machine-readable, not human-readable — name the
+    # tool and put the server in parentheses. Done first so the argument
+    # branches below decorate the readable label, not the raw id.
+    label = name
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        if len(parts) >= 3:
+            label = f"{parts[2]} ({parts[1]})"
+    if name == "Bash":
+        return "Bash · " + _shorten(inp.get("command", ""), 90)
+    for key in ("file_path", "notebook_path", "path"):
+        if inp.get(key):
+            return f"{label} · " + _shorten(rel_path(inp[key]), 70)
+    for key in ("url", "pattern", "query", "description", "prompt"):
+        if inp.get(key):
+            return f"{label} · " + _shorten(inp[key], 70)
+    return label
+
+
+def rel_path(p):
+    """Paths read better shortened: the interesting part of
+    /Users/you/projects/api/handlers/users.go is the tail, and a notification
+    is ~60 characters wide."""
+    p = str(p)
+    home = os.path.expanduser("~")
+    if p.startswith(home + "/"):
+        p = "~" + p[len(home):]
+    parts = p.split("/")
+    return "/".join(parts[-3:]) if len(parts) > 3 else p
+
+
+def pending_action(transcript_path):
+    """What Claude is stuck asking about, read from the transcript.
+
+    A tool call that has been answered leaves a matching tool_result behind,
+    so the one still unanswered is the one holding up the pane. That test
+    beats "the newest tool call" outright: it can't name something you
+    already approved five minutes ago, which would be worse than saying
+    nothing at all. Returns (action, task) — both may be None, and the caller
+    keeps its old wording in that case.
+
+    Only the tail of the file is read: transcripts run to megabytes, and this
+    is on the path of a notification the user is waiting for."""
+    if not transcript_path or not os.path.exists(transcript_path):
+        return None, None
+    try:
+        with open(transcript_path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 512_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None, None
+
+    calls = {}       # tool_use id -> description, in order
+    answered = set()
+    task = None
+    for line in lines:
+        if '"' not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        msg = obj.get("message") or {}
+        content = msg.get("content")
+        if not isinstance(content, list):
+            # A plain-string user message is a typed prompt — the task line.
+            if obj.get("type") == "user" and isinstance(content, str) and content.strip():
+                task = content
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use":
+                calls[block.get("id")] = _describe_tool(
+                    block.get("name", "?"), block.get("input")
+                )
+            elif block.get("type") == "tool_result":
+                answered.add(block.get("tool_use_id"))
+            elif (block.get("type") == "text" and obj.get("type") == "user"
+                    and block.get("text", "").strip()):
+                task = block["text"]
+
+    pending = [d for cid, d in calls.items() if cid not in answered]
+    action = pending[-1] if pending else None
+    # Drop the local-command noise Claude Code injects for slash commands.
+    if task and task.lstrip().startswith("<"):
+        task = None
+    return action, _shorten(task, 60) if task else None
+
+
+def notify_blocked(session_name, pane, window_name, message, action=None, task=None):
     """macOS notification — 'blocked' means Claude's progress is actually
     stalled on a decision only the user can make, unlike a quiet 'done'.
     Clicking it (via terminal-notifier's -execute) jumps straight to the
     pane; a plain osascript notification can't do that."""
-    title = f"Claude 需要你处理 · {session_name}:{window_name}"
-    body = message or "有权限确认或问题在等你回复"
+    # Say *what* it wants, not that it wants something. The hook's own
+    # `message` is boilerplate ("Claude needs your permission to use Bash"),
+    # which tells you nothing you couldn't guess and makes every one of these
+    # look identical — the complaint that prompted this. The action comes
+    # first because it's the decision; the task line under it says which of a
+    # dozen panes this is, in words you wrote.
+    title = f"⏸ 等你确认 · {session_name}:{window_name}"
+    if action:
+        body = action if not task else f"{action}\n↳ {task}"
+    else:
+        body = message or "有权限确认或问题在等你回复"
 
     if shutil.which("terminal-notifier"):
         app = frontmost_app() or "iTerm2"
@@ -173,7 +287,7 @@ def notify_blocked(session_name, pane, window_name, message):
         pass
 
 
-def tmux_flash(session_name, window_name, pane):
+def tmux_flash(session_name, window_name, pane, action=None):
     """In-tmux notification: flash a status-line message on every attached
     client, so a `blocked` pane is noticeable without leaving tmux (the
     macOS notification covers the you're-in-another-app case; this covers
@@ -189,7 +303,12 @@ def tmux_flash(session_name, window_name, pane):
     except Exception:
         return
 
-    msg = f"● Claude 等你确认 · {session_name} · {window_name} — prefix W 跳转"
+    # Same reasoning as the macOS notification: name the action. This line
+    # is one status-line wide, so the action is clipped harder and the task
+    # line is dropped entirely — window name plus "what it wants" is what
+    # makes it decidable without switching.
+    what = f" — {_shorten(action, 60)}" if action else ""
+    msg = f"● 等你确认 · {session_name} · {window_name}{what} — prefix W 跳转"
     for client in clients:
         try:
             active = subprocess.check_output(
@@ -249,9 +368,15 @@ def record_status(status, stdin_data):
         with_status_file(update_restore, path=RESTORE_FILE)
 
     if status == "blocked":
+        transcript = stdin_data.get("transcript_path")
         play_sound()
-        tmux_flash(session_name, window_name, pane)
-        notify_blocked(session_name, pane, window_name, stdin_data.get("message"))
+        # Read the transcript once and hand the result to both channels —
+        # they're saying the same thing to two different places, and the tail
+        # read shouldn't happen twice on a path the user is waiting on.
+        action, task = pending_action(transcript)
+        tmux_flash(session_name, window_name, pane, action)
+        notify_blocked(session_name, pane, window_name,
+                       stdin_data.get("message"), action, task)
 
 
 def record_notification():
