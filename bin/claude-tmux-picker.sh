@@ -79,7 +79,7 @@ printf '%s\n' "$rows" > "$ROWS_FILE"
 PENDING_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-pending.XXXXXX")"
 export PENDING_FILE
 
-trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE"' EXIT
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${INIT_FILE:-}"' EXIT
 
 # Starts with search disabled AND the input line hidden (--disabled
 # --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
@@ -107,7 +107,7 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --bind "p:transform:$BIN_DIR/skip-header.sh {n} preview p"
   --bind "q:transform:$BIN_DIR/skip-header.sh {n} quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh {n} esc"
-  --bind "ctrl-x:execute-silent(python3 '$STATUS_UPDATER' mark-archived {2})+reload($BIN_DIR/list-rows.sh | tee '$ROWS_FILE')"
+  --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh {n} archive"
   --bind "start:bg-transform-footer:$BIN_DIR/usage-footer.sh")
 
 # Digits type a pane-row number (the gutter number) and jump there — see
@@ -121,12 +121,18 @@ for d in 0 1 2 3 4 5 6 7 8 9; do
   fzf_args+=(--bind "$d:transform:$BIN_DIR/skip-header.sh {n} digit $d")
 done
 
-LOAD_BIND="load:transform:$BIN_DIR/skip-header.sh 0 init"
+# Initial cursor. Everything goes through skip-header.sh's `init` rather than
+# a bare load:pos(), because `load` fires again after every reload() — a bare
+# pos() there would yank the cursor back to the starting row every time you
+# pressed `a` or archived something. skip-header.sh makes it fire once, using
+# $INIT_FILE as the marker.
+INIT_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-init.XXXXXX")"
+export INIT_FILE
 if [ -n "${CALLER_PANE:-}" ]; then
   CALLER_POS=$(printf '%s\n' "$rows" | awk -F'\t' -v p="$CALLER_PANE" '$2==p { print NR; exit }')
-  [ -n "$CALLER_POS" ] && LOAD_BIND="load:pos($CALLER_POS)"
+  export CALLER_POS
 fi
-fzf_args+=(--bind "$LOAD_BIND")
+fzf_args+=(--bind "load:transform:$BIN_DIR/skip-header.sh 0 init")
 
 # `|| true`: fzf exits 130 on Esc/ctrl-c, which would otherwise ride
 # set -e out of this script and make tmux print

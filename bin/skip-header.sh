@@ -75,6 +75,84 @@ if [ "${FZF_INPUT_STATE:-disabled}" = "enabled" ]; then
   exit 0
 fi
 
+# Both `a` and ctrl-x replace the whole list under the cursor, and fzf's
+# reload() puts the cursor back on row one. That's wrong for both: neither key
+# means "take me somewhere else", so the cursor has to be carried across.
+# remember_cursor notes what the cursor is on; reload_keeping_place rebuilds
+# the list *here* (not inside reload(), so the new rows exist before we need
+# to search them) and emits a pos() for wherever that row landed.
+#
+# Fields come out via awk, not `read -r ... < <(...)`: tab is an IFS
+# *whitespace* character, so `IFS=$'\t' read` collapses runs of it and a
+# header row (whose pane field is empty) parses one field short — the session
+# name lands in old_pane and the cursor jumps.
+old_pane="" old_session="" old_num=""
+remember_cursor() {
+  [ -n "${ROWS_FILE:-}" ] && [ -s "$ROWS_FILE" ] || return 0
+  local n=$(( cur + 1 ))
+  old_pane=$(awk -F'\t' -v n="$n" 'NR == n { print $2 }' "$ROWS_FILE")
+  old_session=$(awk -F'\t' -v n="$n" 'NR == n { print $3 }' "$ROWS_FILE")
+  old_num=$(awk -F'\t' -v n="$n" 'NR == n { print $4 }' "$ROWS_FILE")
+}
+
+# $1 = which way to fall back when the remembered row is no longer in the
+# list: `before` (nearest pane row at or above its old number) or `after`.
+reload_keeping_place() {
+  if [ -z "${ROWS_FILE:-}" ]; then
+    echo "reload($BIN_DIR/list-rows.sh)"       # standalone/debug: no cache to keep
+    return 0
+  fi
+  "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
+  local pos
+  pos=$(awk -F'\t' -v p="$old_pane" -v s="$old_session" -v num="$old_num" \
+            -v prefer="$1" '
+    $2 != "" && $2 == p { print NR; found = 1; exit }
+    $2 == "" && $4 == "" && p == "" && $3 == s { print NR; found = 1; exit }
+    {
+      if ($2 != "") {
+        if (first == 0) first = NR
+        if (num != "" && $4 != "") {
+          if ($4 + 0 <= num + 0) before = NR
+          if ($4 + 0 >= num + 0 && after == 0) after = NR
+        }
+      }
+    }
+    END {
+      # Guarded, because awk runs END even after `exit` — without this the
+      # matched row and the fallback both print and pos() gets two numbers,
+      # which fzf ignores, which sends the cursor to the top. Which is the
+      # bug this whole function exists to fix.
+      if (!found) {
+        pick = (prefer == "after") ? (after ? after : before) \
+                                   : (before ? before : after)
+        print (pick ? pick : (first ? first : 1))
+      }
+    }
+  ' "$ROWS_FILE")
+  echo "reload-sync(cat '$ROWS_FILE')+pos(${pos:-1})"
+}
+
+# fzf fires `load` every time the list finishes loading — including after
+# every reload() — and the initial cursor placement is bound to it. So each
+# `a` or ctrl-x reload re-ran "put the cursor where the picker started" and
+# undid the pos() that was carrying the cursor across. This makes it what it
+# was always meant to be: a *first* load hook. $INIT_FILE is the marker
+# (created empty by the picker, filled here on the first load).
+if [ "$dir" = "init" ]; then
+  if [ -n "${INIT_FILE:-}" ] && [ -s "$INIT_FILE" ]; then
+    echo "ignore"            # a reload — whoever triggered it owns the cursor
+    exit 0
+  fi
+  [ -n "${INIT_FILE:-}" ] && printf 'done' > "$INIT_FILE"
+  # Opened via the tmux binding that passes CALLER_PANE, and that pane is
+  # tracked: start on "where I am" rather than on whatever is first.
+  if [ -n "${CALLER_POS:-}" ]; then
+    [ -n "${MODE_FILE:-}" ] && printf 'pane' > "$MODE_FILE"
+    echo "pos($CALLER_POS)"
+    exit 0
+  fi
+fi
+
 # Navigation mode from here on.
 case "$dir" in
   slash)
@@ -94,18 +172,7 @@ case "$dir" in
     # list here rather than inside reload(), and follow up with pos() on
     # wherever that same row landed. reload-sync (not reload) is what makes
     # the pos() land on the new list instead of racing the old one.
-    # Fields come out via awk, not `read -r ... < <(...)`: tab is an IFS
-    # *whitespace* character, so `IFS=$'\t' read` collapses runs of it and a
-    # header row (whose pane field is empty) parses one field short — the
-    # session name lands in old_pane and the cursor jumps.
-    old_pane="" old_session="" old_num=""
-    if [ -n "${ROWS_FILE:-}" ] && [ -s "$ROWS_FILE" ]; then
-      cur_line=$(( cur + 1 ))
-      old_pane=$(awk -F'\t' -v n="$cur_line" 'NR == n { print $2 }' "$ROWS_FILE")
-      old_session=$(awk -F'\t' -v n="$cur_line" 'NR == n { print $3 }' "$ROWS_FILE")
-      old_num=$(awk -F'\t' -v n="$cur_line" 'NR == n { print $4 }' "$ROWS_FILE")
-    fi
-
+    remember_cursor
     if [ -n "${SHOW_ALL_FILE:-}" ]; then
       if [ "$(cat "$SHOW_ALL_FILE" 2>/dev/null)" = "1" ]; then
         printf '0' > "$SHOW_ALL_FILE"
@@ -113,23 +180,22 @@ case "$dir" in
         printf '1' > "$SHOW_ALL_FILE"
       fi
     fi
-
-    if [ -z "${ROWS_FILE:-}" ]; then
-      echo "reload($BIN_DIR/list-rows.sh)"
-      exit 0
+    # Collapsing the row you're on should leave you just above it, where the
+    # rows you were reading still are.
+    reload_keeping_place before
+    exit 0
+    ;;
+  archive)
+    # ctrl-x. Same reload-resets-the-cursor problem as `a`, one difference:
+    # the row is *gone* afterwards, so the natural landing spot is the row
+    # that took its place — the next one, the way deleting a message in an
+    # inbox advances rather than jumping to the top.
+    remember_cursor
+    if [ -n "$old_pane" ]; then
+      python3 "$BIN_DIR/../hooks/tmux_status_update.py" mark-archived "$old_pane" \
+        2>/dev/null || true
     fi
-    "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
-    # Exact row if it's still visible; otherwise — you collapsed the very row
-    # you were on — the nearest pane row at or above its old number, which
-    # keeps you in the same neighbourhood instead of at the top.
-    new_pos=$(awk -F'\t' -v p="$old_pane" -v s="$old_session" -v num="$old_num" '
-      $2 != "" && $2 == p { print NR; found = 1; exit }
-      $2 == "" && $4 == "" && p == "" && $3 == s { print NR; found = 1; exit }
-      { if ($2 != "") { if (first == 0) first = NR
-                        if (num != "" && $4 != "" && $4 + 0 <= num + 0) near = NR } }
-      END { if (!found) print (near ? near : (first ? first : 1)) }
-    ' "$ROWS_FILE")
-    echo "reload-sync(cat '$ROWS_FILE')+pos(${new_pos:-1})"
+    reload_keeping_place after
     exit 0
     ;;
   preview)

@@ -115,9 +115,10 @@ several ways at once — because any single channel can miss:
   you. The overwrite-on-status-change behavior means it naturally goes back to
   unread `DONE` the next time that pane actually finishes something new.
 - `ctrl-x` archives the highlighted pane (`mark-archived`) and reloads the list
-  in place via fzf's `reload()` — for a pane you've decided needs no more
-  attention. It comes back automatically the next time that pane's status
-  changes.
+  in place — for a pane you've decided needs no more attention. The cursor
+  advances to the row that took its place rather than jumping to the top (see
+  the picker section). It comes back automatically the next time that pane's
+  status changes.
 
 ## The picker
 
@@ -218,11 +219,28 @@ key:
   dropping it there would make 12 unreachable — so an extendable prefix is held
   even when it has no row to park on.
 
-- **`a` toggles collapsed/expanded** — writes a per-instance `SHOW_ALL_FILE` that
-  `list-rows.sh` reads via `CLAUDE_TMUX_SHOW_ALL_FILE`, then `reload()`s through
-  the same `tee` that keeps the row cache fresh, exactly like `ctrl-x`. The file
-  is created before the first render, so the initial list and every reload agree
-  on one source of truth.
+- **`a` toggles collapsed/expanded** — writes a per-instance `SHOW_ALL_FILE`
+  that `list-rows.sh` reads via `CLAUDE_TMUX_SHOW_ALL_FILE`, created before the
+  first render so the initial list and every reload agree on one source of
+  truth.
+
+  Both `a` and `ctrl-x` replace the entire list under the cursor, and fzf's
+  `reload()` puts the cursor back on the first row. Neither key means "take me
+  somewhere else", so both go through the same two helpers: remember what the
+  cursor is on, rebuild the list in the transform (not inside `reload()`, so
+  the new rows exist before anything searches them), then `reload-sync(...)` —
+  sync, or the `pos()` races the old list — `+pos()` onto wherever that row
+  landed. When the remembered row is gone, `a` falls back to the nearest pane
+  row *above* its old number (you collapsed what you were reading, so stay
+  where the readable rows are) and `ctrl-x` to the nearest *below* (the
+  archived row is gone; advancing is what an inbox does).
+
+  The subtle part: fzf fires `load` on every list load, **including reloads**,
+  and the initial cursor placement is bound to `load`. So each reload re-ran
+  "put the cursor where the picker started" and silently undid the `pos()`.
+  `skip-header.sh`'s `init` is now guarded by an `$INIT_FILE` marker, making it
+  a genuine first-load hook; later loads return `ignore` and leave the cursor
+  to whoever triggered the reload.
 - **`p` toggles the preview off entirely** (fzf's `toggle-preview`), handing the
   list the full width — which is the right answer to "the list is too cramped",
   because narrowing the split isn't: it was tried at
