@@ -158,11 +158,25 @@ unread DONE are never hidden, because they're the entire point of the tool.
 standing in is never collapsed (visiting a pane is what marks it READ, so it
 usually qualifies — and not finding yourself in the list is disorienting).
 
-No new UI was needed for "how many are hidden": those two header counts *are*
-the hidden ones, so they change meaning for free. The only addition is a
-trailing dim `⋯` saying there's more behind this header. A session whose panes
-are all collapsed keeps its header, so a 24-pane fleet reads as a handful of
-session lines plus the few rows that want you.
+"How many are hidden" gets its own dim line under each collapsed session
+(`⋯ 收起 3 个(2 已读 · 1 搁置) · a 展开`) rather than being implied by the `✓`
+and dim `✔` counts in the header. Those counts *are* the collapsed panes, which
+was tempting — but implied is not the same as readable, and the question you
+actually have is "is pressing `a` worth it", which deserves an answer in words.
+A session whose panes all collapse keeps its header, so a 24-pane fleet reads
+as a handful of session lines plus the few rows that want you.
+
+That line also sets the threshold: **a session with only one collapsible pane
+doesn't collapse.** The summary occupies exactly the row it would have saved,
+so hiding a single pane trades a row you can read for a row you have to press
+a key to see. `MIN_COLLAPSE = 2`.
+
+The summary is a third kind of row — empty pane id (like a header) plus `-` in
+the row-number field. `skip-header.sh` therefore tracks header positions and
+pane positions as two separate sets instead of treating "not a header" as "a
+pane": the cursor stops on the summary in neither mode, because it's a label,
+not a destination. Nothing else needed changing — the preview and Enter both
+branch on an empty pane id and already do the session-level thing for it.
 
 **Numbers are assigned before the visibility test**, which is the one
 load-bearing decision here: a number that changed when you pressed `a` would

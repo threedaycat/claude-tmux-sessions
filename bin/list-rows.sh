@@ -215,6 +215,7 @@ sessions_sorted = sorted(by_session.keys(), key=lambda s: session_order.get(s, 1
 # the same way MODE_FILE is); CLAUDE_TMUX_SHOW_ALL=1 restores the old
 # always-everything behaviour as the default.
 HIDDEN_RANKS = (3, 4)
+MIN_COLLAPSE = 2   # see `collapse` below — hiding one row saves zero rows
 # The pane you're standing in is never collapsed, even when it's a quiet one
 # (it usually is — visiting a pane is what marks it READ). Opening the picker
 # and not finding yourself in the list is disorienting, and it's also where
@@ -255,13 +256,15 @@ for s in sessions_sorted:
         )
         if n
     )
-    # The "how many are collapsed" indicator costs nothing to build: the two
-    # counts that were already in this header, ✓ (READ) and dim ✔ (aged out),
-    # ARE the hidden ones. So a trailing ⋯ is the only new pixel — it says
-    # "there is more behind this header, press a".
-    hidden_here = sum(1 for _seq, rank, *_ in entries if rank in HIDDEN_RANKS)
-    if hidden_here and not show_all:
-        counts += "  \033[2m⋯\033[0m"
+    # Which of this session's panes collapsing would actually remove. The
+    # caller's own pane never counts — it's never hidden.
+    hideable = [e for e in entries if e[1] in HIDDEN_RANKS and e[2] != caller]
+    # Collapsing one row costs one row: the "⋯ 收起 N 个" line replaces it
+    # exactly, so hiding a single pane saves nothing and only makes you press
+    # `a` to see something that was already on screen. Two is where it starts
+    # paying.
+    collapse = (not show_all) and len(hideable) >= MIN_COLLAPSE
+    hidden_ids = {e[2] for e in hideable} if collapse else set()
     header = (
         "\033[1;36m" + pad(f"▾ {sid_label}{s}", 22) + "\033[0m" + counts
     )
@@ -281,7 +284,7 @@ for s in sessions_sorted:
         # skip-header.sh matches the digits you type against the number in
         # field 4 rather than counting pane rows.
         row_num += 1
-        if rank in HIDDEN_RANKS and not show_all and pane != caller:
+        if pane in hidden_ids:
             continue
         # Dim number gutter — the digits you press to jump straight here.
         # Three wide, not two: with 100 panes a 2-wide field silently drops
@@ -305,4 +308,21 @@ for s in sessions_sorted:
                 + "\033[2m" + tilde(cwd) + "\033[0m"
             )
         print(f"{display}\t{pane}\t{s}\t{row_num}")
+
+    if collapse:
+        # Its own line, so the number is readable rather than implied by two
+        # icon counts in the header. Empty pane field + `-` in the row-number
+        # field marks it: skip-header.sh stops the cursor on neither kind of
+        # row, and everything that keys off an empty pane id (the preview's
+        # session card, Enter jumping to the session) already does the right
+        # thing for it.
+        kinds = []
+        n_read = sum(1 for e in hideable if e[1] == 3)
+        n_stale = len(hideable) - n_read
+        if n_read:
+            kinds.append(f"{n_read} 已读")
+        if n_stale:
+            kinds.append(f"{n_stale} 搁置")
+        note = f"⋯ 收起 {len(hideable)} 个({' · '.join(kinds)}) · a 展开"
+        print(f"       \033[2m{note}\033[0m\t\t{s}\t-")
 PYEOF

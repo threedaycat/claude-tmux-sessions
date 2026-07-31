@@ -89,10 +89,12 @@ means you can read the list without relying on it.
   that pane does something new — so the list stays short without you curating it.
 - **Scales past a screenful.** The quiet panes — `READ`, and unread `DONE` you
   haven't touched in hours — **collapse by default**, leaving only what's
-  actionable. Each session header already counted them, so those counts double as
-  "how many are hidden here", with a `⋯` to say there's more. `a` expands
-  everything. Row numbers are assigned *before* collapsing, so a pane's number
-  never changes when you toggle — it just means visible numbers can skip.
+  actionable, with a line under each session saying exactly what it's holding
+  back (`⋯ 收起 3 个(2 已读 · 1 搁置) · a 展开`). A session with only *one*
+  quiet pane doesn't collapse at all: that line would take the row it saved.
+  `a` expands everything. Row numbers are assigned *before* collapsing, so a
+  pane's number never changes when you toggle — it just means visible numbers
+  can skip.
 - **Session mode.** `h` flips the cursor to session headers, and the preview
   becomes one card per pane in that session: its task line, model, context-window
   meter, and a quote of Claude's last reply — read from each pane's transcript,
