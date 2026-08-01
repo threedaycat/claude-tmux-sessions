@@ -163,7 +163,12 @@ done
 INIT_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-init.XXXXXX")"
 export INIT_FILE
 if [ -n "${CALLER_PANE:-}" ]; then
-  CALLER_POS=$(printf '%s\n' "$rows" | awk -F'\t' -v p="$CALLER_PANE" '$2==p { print NR; exit }')
+  # Not onto a teammate row: those are not cursor stops, so starting there
+  # would park the cursor somewhere j/k cannot return to. Opening the
+  # picker from inside a teammate pane therefore falls back to the normal
+  # opening position rather than to "where I am".
+  CALLER_POS=$(printf '%s\n' "$rows" \
+    | awk -F'\t' -v p="$CALLER_PANE" '$2==p && $5!="mate" { print NR; exit }')
   export CALLER_POS
 fi
 fzf_args+=(--bind "load:transform:$BIN_DIR/skip-header.sh 0 init")
@@ -220,6 +225,10 @@ if [ "$kind" = "extra" ]; then
   exit 0
 fi
 
+# A "mate" row deliberately has no branch of its own: it falls through to
+# the pane jump below, which is exactly right for it. The cursor never
+# stops on one, but `/` search can still surface and select it, and when
+# it does, jumping to that pane is what pressing Enter on it should mean.
 pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
 
 # All jumps target a pane id, never a session/window name: tmux allows
