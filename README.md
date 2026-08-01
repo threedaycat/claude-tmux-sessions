@@ -206,7 +206,8 @@ Then remove the four `tmux_status_update.py` hook entries from
   `50` — an even split, so the preview is about as wide as the pane it's
   showing) to change it.
 - `f` narrows the list to your Agent Teams and the panes on them — only live
-  when you actually have a team, see below.
+  when you actually have a team, and the way to put the cursor on a teammate.
+  See below.
 - `Enter` jumps · `ctrl-x` archives the highlighted pane · `q` / `Esc` closes.
 
 ### Agent Teams
@@ -216,6 +217,12 @@ real name and role instead of the shared window title, adds a two-line summary
 per team above the list, and gives the team's block header a preview with the
 full roster and shared task list — including the members that have no pane to
 jump to.
+
+Teammate rows are indented under their lead and are shown rather than
+selected: `j`/`k` step over them and they have no jump number, so a team costs
+one stop in the list instead of one per member. The lead is the useful
+destination anyway — its teammates are in the same tmux window, a native
+pane-switch away. Press `f` when you do want to move among them directly.
 
 The team rows cost nothing if you don't use teams: with no `~/.claude/teams/`
 directory the picker does a single `stat`, adds no row and annotates none.

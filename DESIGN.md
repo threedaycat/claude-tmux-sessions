@@ -411,9 +411,32 @@ every row here is a jump target; it's named in the block's second line and
 in the preview instead. A row that silently swallowed `Enter` would be
 worse than a sentence saying so.
 
-Teammate rows carry no gutter number. The digit shortcut resolves the
-number in field 4, and leaving it empty is what declines it; the row is
-still a pane row, so `j`/`k` and `Enter` reach it exactly as before.
+Teammate rows are shown but not selected. They carry no gutter number
+(field 4 is empty, which is what the digit shortcut resolves against) and
+field 5 marks them `mate`, which takes them out of the set the cursor
+stops on — the same treatment as the `⋯ 收起 N 个` line, reached by a
+different route because a teammate keeps its pane id in field 2 and so
+can't be excluded by the absence of one.
+
+They also step one level further right than everything else, paid for out
+of the name column so the age and the free-form tail stay on the x they
+have everywhere else in the list.
+
+The reason is that a teammate row and its lead were competing for the same
+`j`/`k` step, and the lead is the one worth stopping on: the teammates
+live inside its tmux window, one native pane-switch away, so stopping on
+each of them in turn walked you past the destination through rows that
+mostly repeat what the lead's row already said.
+
+The cost is real and deliberate — no number, no cursor, therefore no
+`Enter`. What remains is `/` search (which can still surface and act on
+one — Enter there jumps to the pane, and that path is left working on
+purpose), tmux's own pane switching once you're in the window, and `f`.
+
+Under `f` the marker is not emitted at all, so teammates are ordinary pane
+rows again. That mode exists to look at them, so there they are the
+destinations. Encoding this in the producer keeps one rule — field 5 says
+what a row is — rather than two that have to be kept in agreement.
 
 **`f`** filters down to the teams and their panes, on the same machinery
 as `a` — including numbering *before* filtering, so nothing renumbers.

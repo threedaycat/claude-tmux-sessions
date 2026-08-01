@@ -423,6 +423,18 @@ if team_only_file and teams_snap:
 ROLE_W = 5      # 4 cells of label + the separating space
 LEAD_COLOUR = "1;36"     # bold cyan, matching the session headers
 MEMBER_COLOUR = "36"     # plain cyan — same family, one step quieter
+# How much further right a teammate's row starts than everything else, so
+# it reads as belonging to the lead above it rather than standing beside
+# it. Taken back out of the name column rather than added to the row, so
+# the indent moves the left edge only: the age column and the free-form
+# tail stay at the same x as every other row. Widening the row instead
+# would make those columns ragged wherever a team happens to be — the very
+# cost the role tag was made a prefix to avoid.
+#
+# Spaces, not a box-drawing or arrow glyph: everything in that range is
+# East-Asian Ambiguous and renders double-width on a CJK-configured
+# terminal, which would push the whole row out of line.
+MATE_INDENT = 2
 
 
 def role_prefix(member):
@@ -604,8 +616,11 @@ for s in sessions_sorted:
                 # A teammate's own name recedes; the role tag in front of it
                 # keeps its colour. The tag is the part worth scanning for —
                 # dimming it too would erase the only signal the row has.
+                # The name column gives up MATE_INDENT cells to pay for the
+                # indent, so everything to its right stays put.
                 name_cell = (role_prefix(member) + "\033[2m"
-                             + col(wname, NAME_W - ROLE_W) + "\033[0m")
+                             + col(wname, NAME_W - ROLE_W - MATE_INDENT)
+                             + "\033[0m")
         else:
             name_cell = col(wname, NAME_W)
             trailing = ""
@@ -613,12 +628,12 @@ for s in sessions_sorted:
         # Three wide, not two: with 100 panes a 2-wide field silently drops
         # the leading digit *and* shifts every column on that row.
         #
-        # A teammate gets the same width in blanks. Blank rather than a
-        # bracket or an arrow: every box-drawing and pointer glyph in this
-        # range is East-Asian Ambiguous, so it doubles in width on a CJK
-        # terminal and pushes the whole row out of line. Empty space costs
-        # nothing and reads as "indented" just as well.
-        num = "       " if is_mate else f"  \033[2m{row_num:>3}\033[0m  "
+        # A teammate gets blanks instead, and MATE_INDENT more of them —
+        # the gutter is where the indent is spent. Empty space costs
+        # nothing and reads as "indented" just as well as any glyph, none
+        # of which are safe at this width (see MATE_INDENT).
+        num = (" " * (7 + MATE_INDENT) if is_mate
+               else f"  \033[2m{row_num:>3}\033[0m  ")
         if rank == 4:
             # Aged-out unread DONE: build the row from plain text and dim
             # the whole thing in one wrap (no embedded colour codes that
@@ -628,13 +643,17 @@ for s in sessions_sorted:
             # colour is the whole signal, and this row's point is to recede.
             #
             # The gutter follows the same rule as every other row: a
-            # teammate has no number, so it gets the same seven blanks.
-            # Printing row_num here regardless would print the number of
-            # the row *above* — it was never incremented for this one — and
-            # two rows claiming the same digit is worse than none.
-            body = ("✔︎ DONE  " + col(wname, NAME_W)
+            # teammate has no number, so it gets blanks, and the same
+            # MATE_INDENT step in — again paid for out of the name column
+            # so the age stays where it is. Printing row_num here
+            # regardless would print the number of the row *above* — it was
+            # never incremented for this one — and two rows claiming the
+            # same digit is worse than none.
+            body = ("✔︎ DONE  "
+                    + col(wname, NAME_W - (MATE_INDENT if is_mate else 0))
                     + col(fmt_age(1, age), AGE_W) + (trailing or tilde(cwd)))
             display = (f"  \033[2m{'' if is_mate else row_num:>3}  "
+                       + (" " * MATE_INDENT if is_mate else "")
                        + body + "\033[0m")
         else:
             display = (
@@ -646,11 +665,31 @@ for s in sessions_sorted:
                 + "\033[2m" + (trailing or tilde(cwd)) + "\033[0m"
             )
         # Field 4 is what skip-header.sh matches typed digits against, so a
-        # teammate leaves it empty: no number in the gutter and no number to
-        # resolve. It stays a pane row — field 2 still carries its pane id,
-        # which is what PANE_POS keys on — so j/k and Enter reach it exactly
-        # as before. Only the digit shortcut declines to.
-        print(f"{display}\t{pane}\t{s}\t{'' if is_mate else row_num}")
+        # teammate leaves it empty: no number in the gutter, no number to
+        # resolve.
+        #
+        # Field 5 "mate" takes it out of the cursor's path as well. It
+        # still carries its pane id in field 2 — the preview needs it, and
+        # a search hit can still act on it — so the marker, not the absence
+        # of a pane id, is what says "not a stop". A teammate row and its
+        # lead were competing for the same j/k step, and the lead is the
+        # one you want: the teammates are inside its window, one native
+        # tmux pane-switch away, so stopping on each of them in turn made
+        # you walk past the destination to reach rows that only repeat what
+        # the lead's row already told you.
+        #
+        # Under `f` the marker is deliberately not emitted. That mode
+        # exists to look at teammates, so there they are the destinations
+        # and the cursor must stop on them. Encoding it here rather than
+        # teaching skip-header.sh about the filter keeps one rule — field 5
+        # says what a row is — instead of two that have to agree.
+        # Appended only when it has a value, never as an empty trailing
+        # field: an ordinary pane row has to keep emitting exactly four
+        # fields, or every row in the list gains a tab and the "nothing
+        # changes for people without teams" guarantee dies on a character
+        # nobody can see.
+        suffix = "\tmate" if (is_mate and not team_only) else ""
+        print(f"{display}\t{pane}\t{s}\t{'' if is_mate else row_num}{suffix}")
 
     if collapse:
         # Its own line, so the number is readable rather than implied by two

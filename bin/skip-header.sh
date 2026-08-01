@@ -117,7 +117,10 @@ reload_keeping_place() {
     $2 != "" && $2 == p { print NR; found = 1; exit }
     $2 == "" && $4 == "" && p == "" && $3 == s { print NR; found = 1; exit }
     {
-      if ($2 != "") {
+      # Teammate rows are skipped as landing spots for the same reason the
+      # cursor does not stop on them: pos() onto one would park the cursor
+      # somewhere j/k cannot get back to.
+      if ($2 != "" && $5 != "mate") {
         if (first == 0) first = NR
         if (num != "" && $4 != "") {
           if ($4 + 0 <= num + 0) before = NR
@@ -276,7 +279,15 @@ TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
 # its row-number field is empty, so HEADER_POS would take it if it weren't
 # for the field-5 test, and its pane id is empty, so PANE_POS never will.
 HEADER_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "" && $4 == "" && $5 == "") print NR }' | paste -sd, -),"
-PANE_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 != "") print NR }' | paste -sd, -),"
+# Teammate rows (field 5 == "mate") are excluded: they carry a pane id, so
+# the bare `$2 != ""` test used to take them, and the cursor stopped on
+# every teammate on its way past a team — walking you through rows that
+# repeat what their lead's row already says, to reach a lead you'd wanted
+# in one step. They stay visible, and a search hit can still act on one;
+# they are simply not somewhere j/k stops. Under `f` list-rows.sh omits
+# the marker, so in that mode they are ordinary pane rows again — which is
+# the whole point of that mode.
+PANE_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 != "" && $5 != "mate") print NR }' | paste -sd, -),"
 EXTRA_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($5 == "extra") print NR }' | paste -sd, -),"
 TEAM_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($5 == "team") print NR }' | paste -sd, -),"
 
