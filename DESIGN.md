@@ -340,6 +340,96 @@ grep -rniE '<names that would leak your setup>' bin/ hooks/ *.md docs/
 # must produce no output
 ```
 
+## The Agent Teams view
+
+Claude Code can run a *team*: a lead plus teammates, each in its own tmux
+pane, sharing a task list. Those panes are tracked like any other, so
+without this they arrive as an anonymous cluster of rows — the same window
+name on every one of them, no way to tell who is who.
+
+The team *rows* are gated on one `stat`. With no `~/.claude/teams/`
+directory, `bin/agent_teams.py` is never imported, no extra process runs,
+no extra file is read, and not one row is added or annotated — verified by
+diffing the row output against the previous version with the directory
+absent.
+
+The *naming* change below is not gated, and it is worth being precise
+about who it affects. Level 3 replaces `window_name` with `pane_title` for
+every row, team or not. For a pane that owns its tmux window the two
+strings are identical, so those rows don't move. For panes that share a
+window they differ — that is the entire point — so anyone running several
+Claude panes in one window sees those rows change, whether or not they
+have ever used a team. They change from one shared, concatenated title
+repeated on every row to each pane's own.
+
+So the compatibility claim is two claims, and only the first is
+byte-for-byte:
+
+- the Agent Teams view costs nothing and shows nothing until there is a team
+- pane naming got more accurate for everyone, and visibly so for anyone
+  stacking Claude panes in a single window
+
+**Naming a pane.** Five sources, best first, each falling through for its
+own reason:
+
+| | source | falls through when |
+|---|---|---|
+| 1 | a hand-picked session name | not recorded (always, today — the slot is reserved) |
+| 2 | the team roster's `name` | the pane isn't on a team |
+| 3 | `pane_title` | empty, or really the shell's default |
+| 4 | `window_name` | empty |
+| 5 | the session id, then the pane id | never |
+
+Level 3 is why this is worth doing at all: several Claude panes sharing
+one tmux window all write to the same `window_name`, so it arrives as
+their titles concatenated in an order none of them agree on, while
+`pane_title` stays per-pane and clean. Level 2 doubles as the membership
+test — a roster hit *is* membership, so nothing tests for it separately —
+and the lead needs no special case, because it falls through to level 3
+and its `pane_title` is the session summary, which is what its row should
+say. Level 5 prefers the session id because a tmux server restart
+renumbers every pane while the session id survives it; its only job is to
+guarantee no path returns an empty name.
+
+> `pane_title` falls back to the machine's user and host name when nothing
+> has set it. `safe_title()` in both renderers drops those rather than
+> print them into a list people screenshot. `prune()` should already keep
+> such panes out of the list, but that invariant lives in another file and
+> guards something else — don't delete the check because it looks
+> redundant.
+
+**Rows.** A team gets a two-line block above the session list: roster size
+and the work nobody is holding, then the members with no pane of their
+own. Members are annotated in place on the pane rows they already had,
+with a cyan role tag taking the first cells of the name column — a
+*prefix*, not a new column, because a real column would have to be padded
+on every row in the list, so turning teams on would visibly reflow
+sessions that have nothing to do with them.
+
+A member with no pane never gets a row. It has nowhere to jump to, and
+every row here is a jump target; it's named in the block's second line and
+in the preview instead. A row that silently swallowed `Enter` would be
+worse than a sentence saying so.
+
+Teammate rows carry no gutter number. The digit shortcut resolves the
+number in field 4, and leaving it empty is what declines it; the row is
+still a pane row, so `j`/`k` and `Enter` reach it exactly as before.
+
+**`f`** filters down to the teams and their panes, on the same machinery
+as `a` — including numbering *before* filtering, so nothing renumbers.
+With no team present the key is inert and the header doesn't mention it.
+
+**`$CLAUDE_TMUX_TEAM_LABELS`** names a JSON file mapping member name to the
+word shown in its role tag. The official data distinguishes exactly one
+role, the lead; every finer distinction is an editorial claim about one
+particular team. So the picker transports the value and never interprets
+it — the same seam as `$CLAUDE_TMUX_EXTRA_CMD`, and for the same reason.
+
+**What isn't claimed.** A task shows against a member only when the task
+list records who owns it. No owner means the row falls back to its cwd and
+the task appears only in the team block. Guessing would poison the one
+column whose whole value is that you can act on it.
+
 ## The live preview
 
 Moving the selection instantly re-runs `tmux capture-pane -S -200` on the

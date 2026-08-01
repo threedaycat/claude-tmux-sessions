@@ -41,6 +41,26 @@ export SHOW_ALL_FILE
 export CLAUDE_TMUX_SHOW_ALL_FILE="$SHOW_ALL_FILE"
 if [ "${CLAUDE_TMUX_SHOW_ALL:-}" = "1" ]; then printf '1' > "$SHOW_ALL_FILE"; else printf '0' > "$SHOW_ALL_FILE"; fi
 
+# Agent Teams. `f` filters the list down to the teams and their panes, and
+# it only exists when there is a team to filter — checked once, here, with
+# a single stat. No team means no TEAM_FILE, which means skip-header.sh
+# returns `ignore` for `f` exactly as it does for any unbound letter, and
+# the header below never mentions it. Nobody who hasn't switched Agent
+# Teams on pays anything for this beyond the stat.
+CLAUDE_HOME_DIR="${CLAUDE_HOME:-$HOME/.claude}"
+PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+if [ -d "$CLAUDE_HOME_DIR/teams" ]; then
+  TEAM_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-teamonly.XXXXXX")"
+  export TEAM_FILE
+  export CLAUDE_TMUX_TEAM_ONLY_FILE="$TEAM_FILE"
+  printf '0' > "$TEAM_FILE"
+  PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · f 编队 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+fi
+# Exported so skip-header.sh uses the same string when it restores the
+# header after a mode switch. It used to be written out twice, once here
+# and once there, which is how the two could disagree.
+export PANE_HEADER
+
 rows="$("$BIN_DIR/list-rows.sh")"
 
 if [ -z "$rows" ]; then
@@ -79,7 +99,7 @@ printf '%s\n' "$rows" > "$ROWS_FILE"
 PENDING_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-pending.XXXXXX")"
 export PENDING_FILE
 
-trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${INIT_FILE:-}"' EXIT
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${TEAM_FILE:-}" "${INIT_FILE:-}"' EXIT
 
 # Starts with search disabled AND the input line hidden (--disabled
 # --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
@@ -89,7 +109,7 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${INIT_F
 # navigation) — all dispatched through skip-header.sh, which branches on
 # FZF_INPUT_STATE (hidden in navigation, enabled while searching).
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
-  --header='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+  --header="$PANE_HEADER"
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
   --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,border-left,wrap,follow"
@@ -104,6 +124,11 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --bind "l:transform:$BIN_DIR/skip-header.sh {n} right l"
   --bind "/:transform:$BIN_DIR/skip-header.sh {n} slash /"
   --bind "a:transform:$BIN_DIR/skip-header.sh {n} showall a"
+  # `f` narrows the list to the teams and their panes. Bound
+  # unconditionally so that while the search input is open it still types
+  # an f; with no team on the machine the transform returns `ignore` and
+  # the key is inert, like any other letter nothing is bound to.
+  --bind "f:transform:$BIN_DIR/skip-header.sh {n} teamonly f"
   --bind "p:transform:$BIN_DIR/skip-header.sh {n} preview p"
   # `t` opens the token page. Unlike every other key here, the work can't
   # be done by the transform: actions printed by transform go through the
@@ -156,6 +181,37 @@ chosen=$(printf '%s\n' "$rows" | fzf "${fzf_args[@]}" || true)
 # popup's own TTY so a provider that prompts (e.g. "wake it up? [y/N]")
 # works normally.
 kind=$(printf '%s' "$chosen" | awk -F'\t' '{print $5}')
+
+# Team block header: jump to whichever pane on that team is the lead's.
+# Routed by field 5 before anything reads field 3, which on this row holds
+# the team name rather than a session name — the two would otherwise be
+# indistinguishable to the header branch further down.
+#
+# A team whose lead has no pane is a real state, not an error: the roster
+# records a placeholder there rather than a pane id. There is nothing to
+# switch to, so nothing happens — the same as pressing Enter on a session
+# that has gone away. The preview is where that team's story gets told.
+if [ "$kind" = "team" ]; then
+  team=$(printf '%s' "$chosen" | awk -F'\t' '{print $6}')
+  lead_pane=$(CLAUDE_TMUX_TEAM="$team" python3 - "$BIN_DIR" <<'PYEOF' 2>/dev/null || true
+import os, sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import agent_teams
+    for m in agent_teams.members(os.environ.get("CLAUDE_TMUX_TEAM", "")):
+        if m["is_lead"] and m["pane"]:
+            print(m["pane"])
+            break
+except Exception:
+    pass
+PYEOF
+)
+  if [ -n "$lead_pane" ] && tmux display-message -p -t "$lead_pane" '' >/dev/null 2>&1; then
+    tmux switch-client -t "$lead_pane" 2>/dev/null || tmux attach -t "$lead_pane"
+  fi
+  exit 0
+fi
+
 if [ "$kind" = "extra" ]; then
   item_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $6}')
   if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; then
