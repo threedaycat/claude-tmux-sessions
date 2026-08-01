@@ -175,7 +175,20 @@ rm -f ~/.claude/tmux-claude-status.json ~/.claude/tmux-claude-restore.json ~/.cl
 - `p` 收起预览,把整个宽度让给列表 —— 追踪十几个 pane、想扫一眼名字和路径的时候值得。再按
   一次把预览叫回来,或者用 `CLAUDE_TMUX_PREVIEW_WIDTH`(默认 `50` —— 对半分,预览就和它显示的那个 pane 差不多宽)
   改这个比例。
+- `f` 把列表收窄成"只看编队" —— 只有你真的有编队时才生效,见下。
 - `Enter` 跳转 · `ctrl-x` 归档当前高亮的 pane · `q` / `Esc` 关闭。
+
+### Agent Teams(编队)
+
+如果你在用 Claude Code 的编队,picker 会把每个队员的 pane 标上它**真正的名字和角色**
+(而不是那串几个 pane 共用的窗口标题),在列表上方给每个编队加一段两行的摘要,并且给编队
+那一行配一个预览:完整花名册 + 共享任务表 —— 包括那些**没有 pane、跳不过去**的成员。
+
+没在用编队的人**一分钱都不用付**:没有 `~/.claude/teams/` 目录时,picker 只多做一次
+`stat`,输出跟以前逐字节相同,`f` 是死键,header 里也不会提它。
+
+把 `CLAUDE_TMUX_TEAM_LABELS` 指向一个 JSON(`{"成员名": "词"}`),就能自己决定每个成员
+角色标签上显示哪个词。picker 只负责把它显示出来,不解释它是什么意思。
 
 ## 为什么不直接……
 

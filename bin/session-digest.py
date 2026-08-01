@@ -12,8 +12,10 @@ env:  FZF_PREVIEW_LINES / FZF_PREVIEW_COLUMNS (set by fzf)
 The transcript lives at ~/.claude/projects/<cwd with / -> ->/<session_id>.jsonl;
 the hooks record session_id per pane exactly so this lookup works.
 """
+import getpass
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -25,6 +27,89 @@ PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 RESET = "\033[0m"
 DIM = "\033[2m"
 BOLD = "\033[1m"
+CYAN = "\033[36m"
+
+
+def _default_titles():
+    """Values tmux and the shell leave in a pane title when nothing else
+    set one. Computed at runtime so no machine's user or host name is ever
+    written into this repo."""
+    out = set()
+    try:
+        host = socket.gethostname()
+        out.update((host, host.split(".")[0]))
+    except Exception:
+        pass
+    try:
+        out.add(getpass.getuser())
+    except Exception:
+        pass
+    return out
+
+
+_DEFAULT_TITLES = _default_titles()
+
+
+def safe_title(title):
+    """A pane title, or "" when it's really the shell's default.
+
+    Deliberately duplicated from list-rows.sh rather than shared: the two
+    renderers already keep their own copies of vwidth/clip/fmt_age for the
+    same reason, which is that list-rows.sh's copy lives inside a heredoc
+    and importing across that boundary would cost a file read on the path
+    that must stay free. Keep the two in step.
+
+    Why the guard is here and not in the pruner: prune() drops panes whose
+    command is a shell, so these titles shouldn't reach a preview at all.
+    That invariant lives in another file, guards a different problem, and
+    was never written to hold this one — and the failure it would let
+    through is a user and host name rendered into a screenshot. **Not
+    redundant. Don't remove it because prune looks like it covers it.**"""
+    t = (title or "").strip()
+    if not t or t in _DEFAULT_TITLES:
+        return ""
+    try:
+        if t.startswith(getpass.getuser() + "@"):
+            return ""
+    except Exception:
+        pass
+    return t
+
+
+def load_teams():
+    """Agent Teams state, or None when there is none.
+
+    Same one-stat gate as list-rows.sh, and for the same reason: a preview
+    runs on every cursor stop, so the cost of this feature for someone who
+    never turned Agent Teams on has to be a stat and nothing else — no
+    import, no extra process."""
+    home = os.environ.get("CLAUDE_HOME") or os.path.expanduser("~/.claude")
+    if not os.path.isdir(os.path.join(home, "teams")):
+        return None
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import agent_teams
+        snap = agent_teams.snapshot()
+    except Exception:
+        return None
+    return snap if snap["teams"] else None
+
+
+def display_name(pane, rec, window_name, pane_title, member):
+    """The name for a pane, best source first — see list-rows.sh for the
+    full reasoning. Kept in step with it so a pane is called the same thing
+    in the list and in the preview of that same list."""
+    manual = (rec.get("session_name") or "").strip()
+    if manual:
+        return manual
+    if member and member.get("name"):
+        return member["name"]
+    return (
+        safe_title(pane_title)
+        or (window_name or "").strip()
+        or (rec.get("session_id") or "")[:8]
+        or pane
+    )
 
 
 def vwidth(s):
@@ -259,6 +344,114 @@ def ctx_bar(model, ctx, cells=10):
     return s
 
 
+def pane_team_lines(pane, width, limit=4):
+    """The few lines that say a pane is not working alone, printed above
+    its status bar in the pane preview.
+
+    Capped at `limit` lines and every one of them conditional: this sits on
+    top of a live screen dump, which is what the preview is actually for,
+    so it may only spend rows when it has something to say. A member with
+    no queued messages and no claimed task gets one line, not four with two
+    of them empty — a blank labelled slot reads as louder than no slot."""
+    teams_snap = load_teams()
+    if not teams_snap:
+        return
+    m = teams_snap["by_pane"].get(pane)
+    if not m:
+        return
+    lines = []
+    head = f"编队 {m['team']} · {m['label']} {m['name']}"
+    if m.get("type"):
+        head += f" · 类型 {m['type']}"
+    lines.append(CYAN + clip(head, width) + RESET)
+    if m.get("doing"):
+        num = f"#{m['doing_id']} " if m.get("doing_id") else ""
+        lines.append("在做 " + clip(num + m["doing"], width - 5))
+    if m.get("inbox"):
+        lines.append(f"信箱 {m['inbox']} 条未读")
+    for ln in lines[:limit]:
+        print(ln)
+
+
+def team_board(team):
+    """--team mode: the roster, for when the cursor is on a team's block
+    header. This is the one preview with no live screen competing for the
+    space, so it is where the whole team fits — including the members the
+    list itself cannot show.
+
+    A member with no pane appears *here and nowhere else*. It has no pane
+    to jump to, so giving it a row in a list whose every row is a jump
+    target would mean a row that silently swallows Enter. Saying so in a
+    place that isn't a jump target is the honest version."""
+    teams_snap = load_teams()
+    if not teams_snap:
+        return
+    t = next((x for x in teams_snap["teams"] if x["team"] == team), None)
+    if not t:
+        return
+    width = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
+
+    try:
+        with open(STATUS_FILE) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+
+    print(BOLD + CYAN + clip(f"编队 {t['team']}", width) + RESET)
+    now = time.time()
+    for m in t["members"]:
+        e = data.get(m["pane"]) if m["pane"] else None
+        if e:
+            label, rank = label_of(e)
+            when = fmt_age(rank, int(now - e.get("updated_at", now)))
+        elif m["pane"]:
+            # In the roster with a pane, but the pane has not reported in.
+            # A teammate only lands in the status file once it has been
+            # through a full turn, so this is the normal look of one that
+            # started moments ago — not an error, and not worth alarming
+            # about.
+            label, when = DIM + "— " + RESET, "状态未知"
+        else:
+            label, when = DIM + "— " + RESET, "没有对应 pane"
+        tail = []
+        if m.get("doing"):
+            num = f"#{m['doing_id']} " if m.get("doing_id") else ""
+            tail.append(num + m["doing"])
+        if m.get("inbox"):
+            tail.append(f"✉{m['inbox']}")
+        row = (f"{CYAN}{pad(m['label'], 5)}{RESET}{pad(clip(m['name'], 15), 16)}"
+               f"{label} {pad(when, 15)}{DIM}{m['pane'] or ''}{RESET}")
+        print(clip(row, width + 40))
+        if tail:
+            print("      " + DIM + clip(" · ".join(tail), width - 6) + RESET)
+
+    ts = [x for x in t["tasks"] if x.get("status") != "completed"]
+    if not ts:
+        return
+    print(DIM + "─" * width + RESET)
+    print(f"共享任务表(未完成 {len(ts)})")
+    done_ids = {str(x.get("id")) for x in t["tasks"] if x.get("status") == "completed"}
+    for x in ts[:12]:
+        owner = x.get("owner") or ""
+        status = x.get("status")
+        waiting = [b for b in x.get("blockedBy") or [] if str(b) not in done_ids]
+        word = "在做" if status == "in_progress" else ("挡住" if waiting else "待领")
+        # An unclaimed task shows a dash rather than a guess. The value of
+        # this column is that you can act on it; a name that might be wrong
+        # is worse than an obvious blank.
+        who = clip(owner, 11) if owner else "——"
+        line = f" {word}  {pad(who, 12)}{clip(x.get('subject') or '', width - 22)}"
+        if waiting:
+            line += DIM + f"  等 #{waiting[0]}" + RESET
+        print(line)
+
+
+def pad(s, width):
+    """Pad to `width` visual columns, always leaving one trailing space so
+    adjacent columns can't butt together (same rule as list-rows.sh)."""
+    return s + " " * max(1, width - vwidth(s))
+
+
 def pane_bar(pane):
     """--pane mode: one Claude-Code-statusline-style line for a single
     tracked pane, printed above the live screen dump in the pane preview
@@ -276,6 +469,9 @@ def pane_bar(pane):
     label, rank = label_of(e)
     age = int(time.time() - e.get("updated_at", time.time()))
     model, ctx, _recap, _task = transcript_info(e, want_text=False)
+
+    width0 = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
+    pane_team_lines(pane, width0)
 
     bits = []
     if model:
@@ -296,6 +492,9 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--pane":
         pane_bar(sys.argv[2])
         return
+    if len(sys.argv) == 3 and sys.argv[1] == "--team":
+        team_board(sys.argv[2])
+        return
     if len(sys.argv) != 2:
         return
     session = sys.argv[1]
@@ -308,7 +507,8 @@ def main():
 
     try:
         out = subprocess.check_output(
-            ["tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{session_name}\t#{window_name}"],
+            ["tmux", "list-panes", "-a", "-F",
+             "#{pane_id}\t#{session_name}\t#{window_name}\t#{pane_title}"],
             text=True, stderr=subprocess.DEVNULL,
         )
     except Exception:
@@ -316,8 +516,11 @@ def main():
     win_of = {}
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) == 3 and parts[1] == session:
-            win_of[parts[0]] = parts[2]
+        if len(parts) == 4 and parts[1] == session:
+            win_of[parts[0]] = (parts[2], parts[3])
+
+    teams_snap = load_teams()
+    by_pane = teams_snap["by_pane"] if teams_snap else {}
 
     now = time.time()
     cards = []
@@ -347,7 +550,12 @@ def main():
         first = False
 
         age = int(now - e.get("updated_at", now))
-        title = f"{label}  {BOLD}{clip(win_of[pane], width - 18)}{RESET}  {DIM}{fmt_age(_rank, age)}{RESET}"
+        wname, ptitle = win_of[pane]
+        member = by_pane.get(pane)
+        name = display_name(pane, e, wname, ptitle, member)
+        role = f"{CYAN}{member['label']}{RESET} " if member else ""
+        title = (f"{label}  {role}{BOLD}{clip(name, width - 18)}{RESET}"
+                 f"  {DIM}{fmt_age(_rank, age)}{RESET}")
         print(title)
 
         model, ctx, recap, task = transcript_info(e)
@@ -371,6 +579,15 @@ def main():
                 print(DIM + "▎" + RESET + " " + ln)
         else:
             print(DIM + "▎ (还没有回复内容)" + RESET)
+
+    # If any pane here belongs to a team, the whole roster goes underneath.
+    # This is the one preview mode with no live screen to compete with, so
+    # it's the natural place for the full picture — and it's where the
+    # members with no pane of their own finally get named.
+    for team in sorted({by_pane[p]["team"] for p in win_of if p in by_pane}):
+        print()
+        print(DIM + "─" * width + RESET)
+        team_board(team)
 
 
 if __name__ == "__main__":

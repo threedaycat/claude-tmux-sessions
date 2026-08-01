@@ -34,7 +34,15 @@ cur="${1:-0}"
 dir="${2:-down}"
 key="${3:-}"
 
-PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+# The pane-mode header is computed by claude-tmux-picker.sh and exported,
+# because whether it advertises `f` depends on whether any team exists —
+# and that is known once, at startup, not on every keypress. The literal
+# below is the fallback for running this script standalone (it is designed
+# to work without $ROWS_FILE for debugging), where an empty header would
+# otherwise be the only sign anything was wrong. It is also the version
+# without `f`, which is correct: no picker instance means no team state to
+# filter.
+PANE_HEADER="${PANE_HEADER:-j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出}"
 SESSION_HEADER='j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
 SEARCH_HEADER='输入过滤 · Enter 跳转 · Esc 返回 j/k 导航'
 
@@ -185,6 +193,32 @@ case "$dir" in
     reload_keeping_place before
     exit 0
     ;;
+  teamonly)
+    # `f`. Identical machinery to `a` — remember the cursor, flip a
+    # per-instance state file, rebuild the list here, then pos() onto
+    # wherever the same row ended up — because it is the same kind of
+    # action: it changes how much of the list you can see, not where you
+    # are. list-rows.sh reads the file via CLAUDE_TMUX_TEAM_ONLY_FILE.
+    #
+    # With no team on the machine the key is simply not live: the picker
+    # exports no TEAM_FILE, so this returns `ignore` and behaves exactly
+    # like every other unbound letter. That is also why the header only
+    # mentions `f` when there is something to filter.
+    if [ -z "${TEAM_FILE:-}" ]; then
+      echo "ignore"
+      exit 0
+    fi
+    remember_cursor
+    if [ "$(cat "$TEAM_FILE" 2>/dev/null)" = "1" ]; then
+      printf '0' > "$TEAM_FILE"
+    else
+      printf '1' > "$TEAM_FILE"
+    fi
+    # Filtering away the row you're on should leave you just above it,
+    # where the rows you were reading still are — same choice as `a`.
+    reload_keeping_place before
+    exit 0
+    ;;
   archive)
     # ctrl-x. Same reload-resets-the-cursor problem as `a`, one difference:
     # the row is *gone* afterwards, so the natural landing spot is the row
@@ -229,16 +263,22 @@ else
   rows="$("$BIN_DIR/list-rows.sh")"
 fi
 TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
-# Four row kinds now, and the cursor treats them differently: session
+# Five row kinds now, and the cursor treats them differently: session
 # headers (empty pane id, empty row number, no kind) stop only in session
 # mode, pane rows (a %pane id) stop only in pane mode, the "⋯ 收起 N 个"
 # summary (empty pane id, row number "-") stops in neither — it's a label,
-# not a destination — and external provider items (field 5 == "extra") stop
-# in pane mode alongside the panes, since Enter acts on them too. Hence
-# separate position sets rather than one negated set.
+# not a destination — external provider items (field 5 == "extra") stop in
+# pane mode alongside the panes, since Enter acts on them too, and team
+# block headers (field 5 == "team") do the same. Hence separate position
+# sets rather than one negated set.
+#
+# A team header must be listed explicitly or it is a row nothing can reach:
+# its row-number field is empty, so HEADER_POS would take it if it weren't
+# for the field-5 test, and its pane id is empty, so PANE_POS never will.
 HEADER_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "" && $4 == "" && $5 == "") print NR }' | paste -sd, -),"
 PANE_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 != "") print NR }' | paste -sd, -),"
 EXTRA_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($5 == "extra") print NR }' | paste -sd, -),"
+TEAM_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($5 == "team") print NR }' | paste -sd, -),"
 
 # Digit key in navigation mode: type a pane-row number (the gutter number
 # shown in each row) and jump there. A digit still jumps *instantly* the
@@ -293,6 +333,10 @@ is_extra() {
   [[ "$EXTRA_POS" == *",$1,"* ]]
 }
 
+is_team() {
+  [[ "$TEAM_POS" == *",$1,"* ]]
+}
+
 # Is position $1 a valid stop in the current mode?
 # `init` is narrower on purpose: with extra provider rows sorted first,
 # landing on "wherever the cursor starts" would land on an extra row
@@ -305,7 +349,7 @@ is_stop() {
   elif [ "$dir" = "init" ]; then
     is_pane "$1"
   else
-    is_pane "$1" || is_extra "$1"
+    is_pane "$1" || is_extra "$1" || is_team "$1"
   fi
 }
 

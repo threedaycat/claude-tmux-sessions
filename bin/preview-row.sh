@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # fzf preview for one picker row.
-# args: $1 = pane_id (empty on session header / extra rows)
-#       $2 = session name (empty on extra rows)
-#       $3 = kind ("extra" on provider rows, empty otherwise)
-#       $4 = opaque id (only meaningful when $3 == "extra")
+# args: $1 = pane_id (empty on session header / extra / team rows)
+#       $2 = session name (the team name on team rows, empty on extra rows)
+#       $3 = kind ("extra" on provider rows, "team" on Agent Teams block
+#            headers, empty otherwise)
+#       $4 = opaque id ($3 == "extra") or the team name ($3 == "team")
 #
 # Pane row: show that pane's screen, full depth.
 # Header row (session-select mode): session-digest.py renders one compact
@@ -22,6 +23,15 @@ item_id="${4:-}"
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 [ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
 BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+if [ "$kind" = "team" ]; then
+  # Team block header: the roster, the shared task list, and the members
+  # this list has no row for. Nothing live to capture here, so the whole
+  # preview is the board.
+  python3 "$BIN_DIR/session-digest.py" --team "$item_id" 2>/dev/null \
+    || echo "(读不到这个编队)"
+  exit 0
+fi
 
 if [ "$kind" = "extra" ]; then
   if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; then

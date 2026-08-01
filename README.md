@@ -205,7 +205,32 @@ Then remove the four `tmux_status_update.py` hook entries from
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
   `50` — an even split, so the preview is about as wide as the pane it's
   showing) to change it.
+- `f` narrows the list to your Agent Teams and the panes on them — only live
+  when you actually have a team, see below.
 - `Enter` jumps · `ctrl-x` archives the highlighted pane · `q` / `Esc` closes.
+
+### Agent Teams
+
+If you run Claude Code teams, the picker labels each teammate's pane with its
+real name and role instead of the shared window title, adds a two-line summary
+per team above the list, and gives the team's block header a preview with the
+full roster and shared task list — including the members that have no pane to
+jump to.
+
+The team rows cost nothing if you don't use teams: with no `~/.claude/teams/`
+directory the picker does a single `stat`, adds no row and annotates none.
+`f` is inert and isn't advertised in the header.
+
+One related change does apply to everybody: rows are now named from the pane's
+own title rather than its tmux window's. For a pane that has a window to
+itself those are the same string and nothing looks different. For several
+Claude panes sharing one window they aren't — the window title is all of their
+titles concatenated — so those rows now show each pane's own name instead of
+the same jumble repeated.
+
+Point `CLAUDE_TMUX_TEAM_LABELS` at a JSON file (`{"member-name": "word"}`) to
+choose the word in each member's role tag. The picker prints whatever you put
+there and doesn't interpret it.
 
 ## Why not just…
 
