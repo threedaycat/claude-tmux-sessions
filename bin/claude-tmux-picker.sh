@@ -187,36 +187,6 @@ chosen=$(printf '%s\n' "$rows" | fzf "${fzf_args[@]}" || true)
 # works normally.
 kind=$(printf '%s' "$chosen" | awk -F'\t' '{print $5}')
 
-# Team block header: jump to whichever pane on that team is the lead's.
-# Routed by field 5 before anything reads field 3, which on this row holds
-# the team name rather than a session name — the two would otherwise be
-# indistinguishable to the header branch further down.
-#
-# A team whose lead has no pane is a real state, not an error: the roster
-# records a placeholder there rather than a pane id. There is nothing to
-# switch to, so nothing happens — the same as pressing Enter on a session
-# that has gone away. The preview is where that team's story gets told.
-if [ "$kind" = "team" ]; then
-  team=$(printf '%s' "$chosen" | awk -F'\t' '{print $6}')
-  lead_pane=$(CLAUDE_TMUX_TEAM="$team" python3 - "$BIN_DIR" <<'PYEOF' 2>/dev/null || true
-import os, sys
-sys.path.insert(0, sys.argv[1])
-try:
-    import agent_teams
-    for m in agent_teams.members(os.environ.get("CLAUDE_TMUX_TEAM", "")):
-        if m["is_lead"] and m["pane"]:
-            print(m["pane"])
-            break
-except Exception:
-    pass
-PYEOF
-)
-  if [ -n "$lead_pane" ] && tmux display-message -p -t "$lead_pane" '' >/dev/null 2>&1; then
-    tmux switch-client -t "$lead_pane" 2>/dev/null || tmux attach -t "$lead_pane"
-  fi
-  exit 0
-fi
-
 if [ "$kind" = "extra" ]; then
   item_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $6}')
   if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; then

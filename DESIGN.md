@@ -398,18 +398,29 @@ guarantee no path returns an empty name.
 > guards something else — don't delete the check because it looks
 > redundant.
 
-**Rows.** A team gets a two-line block above the session list: roster size
-and the work nobody is holding, then the members with no pane of their
-own. Members are annotated in place on the pane rows they already had,
-with a cyan role tag taking the first cells of the name column — a
-*prefix*, not a new column, because a real column would have to be padded
-on every row in the list, so turning teams on would visibly reflow
-sessions that have nothing to do with them.
+**Rows.** A team adds no rows at all. It is summarised on the header of the
+session it is running in — `▾ $7 7  ✔ 1  ▶ 1  编队 队员 3 · 待领 2` — and
+its members are annotated in place on the pane rows they already had, with
+a cyan role tag taking the first cells of the name column. A *prefix*, not
+a new column: a real column would have to be padded on every row in the
+list, so turning teams on would visibly reflow sessions that have nothing
+to do with them.
+
+This started as a two-line block of its own above the list, and folding it
+into the session header removed a whole row kind (`$5 == "team"`) along
+with the cursor, `Enter` and preview cases it needed. A team is spawned by
+splitting the window its lead is already in, so the team and that session
+are one object; drawing them as two rows drew the same thing twice, and
+the block wasn't even a destination — it occupied a row that went nowhere,
+directly above a session header that went exactly where you wanted. The
+session keeps its own name in the header, because that is the coordinate
+people navigate by; a team is something a session *has*.
 
 A member with no pane never gets a row. It has nowhere to jump to, and
-every row here is a jump target; it's named in the block's second line and
-in the preview instead. A row that silently swallowed `Enter` would be
-worse than a sentence saying so.
+every row here is a jump target. Those members are named in the preview,
+which after the fold is the only surface left that can — so that half of
+the preview is not optional decoration, it carries the one thing the row
+list structurally cannot show.
 
 Teammate rows are shown but not selected. They carry no gutter number
 (field 4 is empty, which is what the digit shortcut resolves against) and
@@ -438,9 +449,16 @@ rows again. That mode exists to look at them, so there they are the
 destinations. Encoding this in the producer keeps one rule — field 5 says
 what a row is — rather than two that have to be kept in agreement.
 
-**`f`** filters down to the teams and their panes, on the same machinery
-as `a` — including numbering *before* filtering, so nothing renumbers.
-With no team present the key is inert and the header doesn't mention it.
+**`f`** filters down to the sessions that have a team, on the same
+machinery as `a` — including numbering *before* filtering, so nothing
+renumbers. With no team present the key is inert and the header doesn't
+mention it.
+
+It survived the fold because it acquired a second job on the way: it is
+the only way to put the cursor on a teammate. Without it the marker above
+would make them permanently unreachable except through `/` search, so the
+key that looked redundant once teams stopped having their own block is in
+fact the escape hatch for the row kind that stopped being selectable.
 
 **`$CLAUDE_TMUX_TEAM_LABELS`** names a JSON file mapping member name to the
 word shown in its role tag. The official data distinguishes exactly one
@@ -450,8 +468,8 @@ it — the same seam as `$CLAUDE_TMUX_EXTRA_CMD`, and for the same reason.
 
 **What isn't claimed.** A task shows against a member only when the task
 list records who owns it. No owner means the row falls back to its cwd and
-the task appears only in the team block. Guessing would poison the one
-column whose whole value is that you can act on it.
+the task appears only in the preview's roster. Guessing would poison the
+one column whose whole value is that you can act on it.
 
 ## The live preview
 

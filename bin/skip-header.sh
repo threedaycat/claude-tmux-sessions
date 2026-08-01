@@ -266,18 +266,13 @@ else
   rows="$("$BIN_DIR/list-rows.sh")"
 fi
 TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
-# Five row kinds now, and the cursor treats them differently: session
-# headers (empty pane id, empty row number, no kind) stop only in session
-# mode, pane rows (a %pane id) stop only in pane mode, the "⋯ 收起 N 个"
-# summary (empty pane id, row number "-") stops in neither — it's a label,
-# not a destination — external provider items (field 5 == "extra") stop in
-# pane mode alongside the panes, since Enter acts on them too, and team
-# block headers (field 5 == "team") do the same. Hence separate position
-# sets rather than one negated set.
-#
-# A team header must be listed explicitly or it is a row nothing can reach:
-# its row-number field is empty, so HEADER_POS would take it if it weren't
-# for the field-5 test, and its pane id is empty, so PANE_POS never will.
+# Four row kinds, and the cursor treats them differently: session headers
+# (empty pane id, empty row number, no kind) stop only in session mode,
+# pane rows (a %pane id) stop only in pane mode, the "⋯ 收起 N 个" summary
+# (empty pane id, row number "-") stops in neither — it's a label, not a
+# destination — and external provider items (field 5 == "extra") stop in
+# pane mode alongside the panes, since Enter acts on them too. Hence
+# separate position sets rather than one negated set.
 HEADER_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "" && $4 == "" && $5 == "") print NR }' | paste -sd, -),"
 # Teammate rows (field 5 == "mate") are excluded: they carry a pane id, so
 # the bare `$2 != ""` test used to take them, and the cursor stopped on
@@ -289,7 +284,6 @@ HEADER_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "" && $4 == "" &&
 # the whole point of that mode.
 PANE_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 != "" && $5 != "mate") print NR }' | paste -sd, -),"
 EXTRA_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($5 == "extra") print NR }' | paste -sd, -),"
-TEAM_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($5 == "team") print NR }' | paste -sd, -),"
 
 # Digit key in navigation mode: type a pane-row number (the gutter number
 # shown in each row) and jump there. A digit still jumps *instantly* the
@@ -344,10 +338,6 @@ is_extra() {
   [[ "$EXTRA_POS" == *",$1,"* ]]
 }
 
-is_team() {
-  [[ "$TEAM_POS" == *",$1,"* ]]
-}
-
 # Is position $1 a valid stop in the current mode?
 # `init` is narrower on purpose: with extra provider rows sorted first,
 # landing on "wherever the cursor starts" would land on an extra row
@@ -360,7 +350,7 @@ is_stop() {
   elif [ "$dir" = "init" ]; then
     is_pane "$1"
   else
-    is_pane "$1" || is_extra "$1" || is_team "$1"
+    is_pane "$1" || is_extra "$1"
   fi
 }
 
