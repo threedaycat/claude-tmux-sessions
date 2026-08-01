@@ -374,15 +374,14 @@ def pane_team_lines(pane, width, limit=4):
 
 
 def team_board(team):
-    """--team mode: the roster, for when the cursor is on a team's block
-    header. This is the one preview with no live screen competing for the
-    space, so it is where the whole team fits — including the members the
-    list itself cannot show.
+    """The roster, forming the top half of a team session's preview.
 
     A member with no pane appears *here and nowhere else*. It has no pane
     to jump to, so giving it a row in a list whose every row is a jump
-    target would mean a row that silently swallows Enter. Saying so in a
-    place that isn't a jump target is the honest version."""
+    target would mean a row that silently swallows Enter. Saying so
+    somewhere that isn't a jump target is the honest version — and once
+    the standalone team block was folded into the session header, this
+    became the only place left that can."""
     teams_snap = load_teams()
     if not teams_snap:
         return
@@ -492,9 +491,6 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--pane":
         pane_bar(sys.argv[2])
         return
-    if len(sys.argv) == 3 and sys.argv[1] == "--team":
-        team_board(sys.argv[2])
-        return
     if len(sys.argv) != 2:
         return
     session = sys.argv[1]
@@ -527,13 +523,35 @@ def main():
     for pane, e in data.items():
         if pane not in win_of or e.get("archived"):
             continue
+        # A teammate gets no card of its own here. The roster above already
+        # gives its name, status, age and current task in one line, and a
+        # full card would repeat all of that at five times the height — the
+        # duplication this preview was split in two to remove. Its live
+        # screen is still one keypress away: `f`, then the pane row.
+        if pane in by_pane:
+            continue
         label, rank = label_of(e)
         cards.append((rank, -e.get("updated_at", 0), pane, label, e))
     cards.sort()
+
+    width = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
+
+    # Two halves, team first: "who is here" is the question you open this
+    # preview asking, and the panes below only make sense once it's
+    # answered. This is also the only surface that names the members with
+    # no pane of their own — nothing in the row list can show them.
+    teams_here = sorted({by_pane[p]["team"] for p in win_of if p in by_pane})
+    for i, team in enumerate(teams_here):
+        if i:
+            print()
+        team_board(team)
+    if teams_here and cards:
+        print()
+        print(DIM + "─" * width + RESET)
+
     if not cards:
         return
 
-    width = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
     avail = int(os.environ.get("FZF_PREVIEW_LINES", 40))
     # per card: separator (blank + rule) + title + task + meta = 5 lines
     # of overhead
@@ -580,14 +598,6 @@ def main():
         else:
             print(DIM + "▎ (还没有回复内容)" + RESET)
 
-    # If any pane here belongs to a team, the whole roster goes underneath.
-    # This is the one preview mode with no live screen to compete with, so
-    # it's the natural place for the full picture — and it's where the
-    # members with no pane of their own finally get named.
-    for team in sorted({by_pane[p]["team"] for p in win_of if p in by_pane}):
-        print()
-        print(DIM + "─" * width + RESET)
-        team_board(team)
 
 
 if __name__ == "__main__":

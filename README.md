@@ -213,10 +213,12 @@ Then remove the four `tmux_status_update.py` hook entries from
 ### Agent Teams
 
 If you run Claude Code teams, the picker labels each teammate's pane with its
-real name and role instead of the shared window title, adds a two-line summary
-per team above the list, and gives the team's block header a preview with the
-full roster and shared task list — including the members that have no pane to
-jump to.
+real name and role instead of the shared window title, and summarises the team
+on the header of the session it's running in — no separate block, since a team
+and the session it was spawned in are the same thing. Selecting that header
+gives you a two-part preview: the full roster and shared task list on top —
+including the members that have no pane to jump to — then the session's own
+panes below.
 
 Teammate rows are indented under their lead and are shown rather than
 selected: `j`/`k` step over them and they have no jump number, so a team costs

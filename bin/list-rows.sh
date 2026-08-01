@@ -67,10 +67,11 @@ fi
 # of `display` — it matters because collapsing makes the numbers sparse.
 # Archived panes are omitted entirely.
 #
-# Field 5 marks the rows that aren't panes: "extra" for external provider
-# items (above), "team" for an Agent Teams block header (below). $BIN_DIR
-# is passed so the team reader sitting next to this script can be
-# imported — but only when there is a team to read.
+# Field 5 says what a row is when it isn't an ordinary pane: "extra" for an
+# external provider item (above), "mate" for a team member's pane (below),
+# which is a pane row the cursor deliberately doesn't stop on. $BIN_DIR is
+# passed so the team reader sitting next to this script can be imported —
+# but only when there is a team to read.
 python3 - "$STATUS_FILE" "$BIN_DIR" <<'PYEOF'
 import getpass, json, os, socket, sys, subprocess, time, unicodedata
 from collections import defaultdict
@@ -346,11 +347,18 @@ IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 # stay single-width in the aligned list and take our colour.
 now = time.time()
 by_session = defaultdict(list)
+# Which teams have a pane in which session. Derived from the panes rather
+# than asked of the roster, because the roster records no session: the only
+# thing tying a team to a place in this list is a member's pane id, so a
+# team is "in" whichever session its members turned up in.
+teams_in_session = defaultdict(set)
 for pane, e in data.items():
     if pane not in live or e.get("archived"):
         continue
     _, session, win_idx, window_name, pane_idx, cwd, pane_title = live[pane]
     member = members_by_pane.get(pane)
+    if member:
+        teams_in_session[session].add(member["team"])
     wname = display_name(pane, e, window_name, pane_title, member)
     age = int(now - e.get("updated_at", now))
     status = e.get("status", "running")
@@ -473,53 +481,50 @@ def member_tail(member, counts):
     return " · ".join(bits)
 
 
-# The team block: who is on the roster, and the two kinds of work nobody is
-# holding. It sits below the provider's extra rows and above the sessions —
-# extra rows are things waiting on you, the sessions are where you'd go, and
-# this is the context in between: who is even here.
-counts_of = {}
-if teams_snap:
-    for t in teams_snap["teams"]:
-        counts_of[t["team"]] = t["counts"]
-        c = t["counts"]
-        n_lead = sum(1 for m in t["members"] if m["is_lead"])
-        n_mate = len(t["members"]) - n_lead
-        inbox_total = sum(m["inbox"] for m in t["members"])
-        bits = []
-        if n_lead:
-            bits.append(f"{agent_teams.LEAD_LABEL} {n_lead}")
-        if n_mate:
-            bits.append(f"{agent_teams.MEMBER_LABEL} {n_mate}")
-        for key, word in (("in_progress", "在做"), ("pending", "待领"),
-                          ("blocked", "挡住")):
-            if c.get(key):
-                bits.append(f"{word} {c[key]}")
-        if inbox_total:
-            bits.append(f"信箱 {inbox_total}")
-        head = ("\033[1;36m" + pad(f"▾ 编队 {t['team']}", 22) + "\033[0m"
-                + " · ".join(bits))
-        # Field 5 == "team" is what routes this row: it is not a session
-        # header (those have an empty field 5) and not a pane (those have a
-        # pane id), so without the marker it would be a row the cursor
-        # could never land on. The team name goes in field 3 as well so the
-        # cursor can be found again after a reload, the same way a session
-        # header is.
-        print(f"{head}\t\t{t['team']}\t\tteam\t{t['team']}")
+# A team is summarised on the header of the session it is running in, not
+# in a block of its own.
+#
+# The block used to sit above the list, and it drew the same thing twice: a
+# team is spawned by splitting the window its lead is already in, so the
+# team and that session are one object, and there is no arrangement in
+# which they are two rows worth looking at. Worse, the block wasn't a
+# destination — it occupied a row that couldn't take you anywhere, while
+# the session header directly below it could. Folding it in costs nothing
+# and removes an entire row kind, along with the cursor, Enter and preview
+# special cases that kind needed.
+#
+# What the block's second line used to say — the members with no pane of
+# their own — moves into the preview, which is the one surface with room
+# to name them. It must not simply vanish: it's the part of a team this
+# list structurally cannot show.
+counts_of = {t["team"]: t["counts"] for t in (teams_snap["teams"] if teams_snap else ())}
+team_by_name = {t["team"]: t for t in (teams_snap["teams"] if teams_snap else ())}
 
-        # Second line: the members this list structurally cannot reach.
-        # A member with no pane has nowhere to jump to, so giving it a row
-        # would mean a row that swallows Enter. Saying so in one sentence is
-        # honest; inventing a destination is not.
-        notes = []
-        if t["unlinked"]:
-            notes.append(f"{len(t['unlinked'])} 个成员没有 pane"
-                         f"({'、'.join(t['unlinked'])})")
-        if c.get("completed"):
-            notes.append(f"完成 {c['completed']}")
-        notes.append("f 只看编队")
-        # Field 4 "-" marks a label the cursor skips, exactly like the
-        # "⋯ 收起 N 个" line — all three position sets decline it.
-        print(f"       \033[2m{' · '.join(notes)}\033[0m\t\t\t-")
+
+def team_summary(team):
+    """The team's own counts, for the tail of its session's header.
+
+    Only the numbers that are about the *team* rather than the panes: the
+    session's own status counts are already there and say how the panes
+    are doing. Zero counts are dropped, the same as those."""
+    t = team_by_name.get(team)
+    if not t:
+        return ""
+    c = t["counts"]
+    n_mate = sum(1 for m in t["members"] if not m["is_lead"])
+    bits = []
+    if n_mate:
+        bits.append(f"{agent_teams.MEMBER_LABEL} {n_mate}")
+    for key, word in (("in_progress", "在做"), ("pending", "待领"),
+                      ("blocked", "挡住")):
+        if c.get(key):
+            bits.append(f"{word} {c[key]}")
+    inbox_total = sum(m["inbox"] for m in t["members"])
+    if inbox_total:
+        bits.append(f"信箱 {inbox_total}")
+    if not bits:
+        return ""
+    return "  \033[36m编队\033[0m \033[2m" + " · ".join(bits) + "\033[0m"
 
 row_num = 0  # global 1-based pane-row counter (the digit-jump number)
 for s in sessions_sorted:
@@ -565,8 +570,13 @@ for s in sessions_sorted:
     # was turned on to find.
     collapse = (not show_all) and (not team_only) and len(hideable) >= MIN_COLLAPSE
     hidden_ids = {e[2] for e in hideable} if collapse else set()
+    # The session keeps its own identity — `▾ $7 7` — with the team's
+    # numbers appended. Replacing the name with the team's would cost the
+    # coordinate people actually navigate by; a team is something this
+    # session *has*, not something it stops being.
     header = (
         "\033[1;36m" + pad(f"▾ {sid_label}{s}", 22) + "\033[0m" + counts
+        + "".join(team_summary(t) for t in sorted(teams_in_session.get(s, ())))
     )
     print(f"{header}\t\t{s}")
 
