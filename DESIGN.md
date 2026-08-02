@@ -681,6 +681,39 @@ list records who owns it. No owner means the row falls back to its cwd and
 the task appears only in the preview's roster. Guessing would poison the
 one column whose whole value is that you can act on it.
 
+### `挡住`, and why a missing task counts as finished
+
+The shared task list is one file per task, and **finishing a task can
+delete its file**. That single fact decides how `blockedBy` has to be read,
+and reading it the other way round is wrong in the common case rather than
+in an edge case.
+
+The test is written positively — *is this blocker among the tasks that are
+open* — and never as *is it absent from the completed ones*:
+
+```python
+open_ids = {str(t.get("id")) for t in ts if t.get("status") != "completed"}
+waiting  = [b for b in (t.get("blockedBy") or []) if str(b) in open_ids]
+```
+
+Asked the other way, a blocker that finished and was cleaned up is absent
+from the completed set too, so everything depending on it flips from `待领`
+to `挡住` and the preview announces `等 #1` against a task that no longer
+exists. Reproduced by deleting one completed task file: a `待领` row became
+`挡住 … 等 #1`, and with two blockers it named the deleted one while
+ignoring the one genuinely holding the work up.
+
+**An id that names no file is therefore treated as finished.** The error
+this rules out is over-reporting, and that is the expensive direction:
+`挡住` is the count that sends somebody looking, and sending them after a
+task that has been deleted costs more than a missed blocker would.
+
+Two call sites decide this — `agent_teams.task_counts` for the header and
+pane-summary counts, `session-digest.team_board` for the shared task list —
+and they must not drift, or the header reads `挡住 1` above a list that
+reads `待领`. Same class of problem as the colour map: one concept, two
+implementations, and the only defence is that both are written down here.
+
 ## The live preview
 
 Moving the selection instantly re-runs `tmux capture-pane -S -200` on the

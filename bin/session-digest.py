@@ -529,11 +529,17 @@ def team_board(team):
         return
     print(DIM + "─" * width + RESET)
     print(f"共享任务表(未完成 {len(ts)})")
-    done_ids = {str(x.get("id")) for x in t["tasks"] if x.get("status") == "completed"}
+    # "Still blocking" is asked the positive way round — is this id among the
+    # tasks that are open — because finishing a task can *delete its file*,
+    # and "not in the completed set" then answers yes for work that is done
+    # and gone. See agent_teams.task_counts, which decides the same thing for
+    # the counts; the two must not drift, or the header says `挡住 1` while
+    # the list below it says `待领`.
+    open_ids = {str(x.get("id")) for x in t["tasks"] if x.get("status") != "completed"}
     for x in ts[:12]:
         owner = x.get("owner") or ""
         status = x.get("status")
-        waiting = [b for b in x.get("blockedBy") or [] if str(b) not in done_ids]
+        waiting = [b for b in x.get("blockedBy") or [] if str(b) in open_ids]
         word = "在做" if status == "in_progress" else ("挡住" if waiting else "待领")
         # An unclaimed task shows a dash rather than a guess. The value of
         # this column is that you can act on it; a name that might be wrong

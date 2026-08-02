@@ -198,13 +198,30 @@ def task_counts(ts):
     `blocked` is split out of `pending` because the official status mixes
     two very different situations: work nobody has picked up, and work
     nobody *can* pick up until something else lands. Collapsing them reads
-    as "this team is idle" when the truth is "this team is waiting"."""
-    done = {str(t.get("id")) for t in ts if t.get("status") == "completed"}
+    as "this team is idle" when the truth is "this team is waiting".
+
+    **A blocker is only still blocking if it is on disk and unfinished.**
+    The test is deliberately written the positive way round — "is this id
+    among the open tasks" — and not "is it missing from the completed
+    ones", because the two are not equivalent under the way the official
+    task list is actually stored. One file per task, and **finishing a task
+    can delete its file**. Asking "is it absent from the completed set" then
+    answers yes for a task that finished and was cleaned up, and every task
+    that depended on it flips from `待领` to `挡住` — the picker starts
+    announcing that work is held up by something that is in fact done. That
+    is not an edge case; deletion is the normal end of a task's life.
+
+    So an id that names no file at all is treated as **finished**, not as
+    pending-and-therefore-blocking. The failure mode this rules out is
+    over-reporting, which is the expensive direction: `挡住` is the count
+    that makes someone go looking, and sending them after a task that no
+    longer exists costs more than a missed one would."""
+    open_ids = {str(t.get("id")) for t in ts if t.get("status") != "completed"}
     c = {"pending": 0, "blocked": 0, "in_progress": 0, "completed": 0}
     for t in ts:
         s = t.get("status")
         if s == "pending":
-            waiting = [b for b in t.get("blockedBy") or [] if str(b) not in done]
+            waiting = [b for b in t.get("blockedBy") or [] if str(b) in open_ids]
             c["blocked" if waiting else "pending"] += 1
         elif s in c:
             c[s] += 1
