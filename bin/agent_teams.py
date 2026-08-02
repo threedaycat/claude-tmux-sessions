@@ -95,7 +95,7 @@ def team_names():
 
 
 def members(team):
-    """The roster: `[{name, type, is_lead, pane, cwd}]`, lead first.
+    """The roster: `[{name, type, is_lead, pane, cwd, colour}]`, lead first.
 
     **`pane` is the whole reason this module can say anything useful.** The
     picker's world is keyed by tmux pane id, the team's world is keyed by
@@ -128,6 +128,7 @@ def members(team):
             "is_lead": kind == LEAD_TYPE,
             "pane": pane if pane.startswith("%") else "",
             "cwd": (m.get("cwd") or "").strip(),
+            "colour": (m.get("color") or "").strip().lower(),
         })
     out.sort(key=lambda m: (not m["is_lead"], m["name"]))
     return [m for m in out if m["name"]]
@@ -239,6 +240,48 @@ def label_overrides():
 LEAD_LABEL = "中枢"
 MEMBER_LABEL = "队员"
 
+# The official palette. A teammate is handed one `color` when it is spawned
+# and keeps it for the life of the team, which makes it the one per-member
+# identity that costs no columns to show — the reason this map exists at
+# all (see DESIGN.md, "Naming a pane").
+#
+# Eight names, and this is the whole set: they are theme tokens on the
+# official side, not ANSI names, so the translation to a terminal colour is
+# ours to make and is made here rather than in either renderer — two copies
+# would drift, and a member would then be one colour in the list and
+# another in the preview of that list.
+#
+# Five map onto ANSI's basic eight, which is what we use for them: a basic
+# colour follows whatever palette the terminal is themed with, so it sits
+# beside the list's existing cyan and yellow instead of fighting them.
+# Purple, orange and pink have no basic equivalent and get the nearest
+# xterm-256 index; on a 16-colour terminal those are downsampled rather
+# than dropped.
+#
+# **A colour is never the only thing saying a row is a teammate.** An
+# unknown value here — the palette gains a ninth name, a config is
+# hand-edited — returns "", which renders the name plainly. That has to
+# stay a cosmetic loss, so nothing may key off this map being non-empty.
+COLOUR_SGR = {
+    "red": "31",
+    "blue": "34",
+    "green": "32",
+    "yellow": "33",
+    "cyan": "36",
+    "purple": "38;5;141",
+    "orange": "38;5;208",
+    "pink": "38;5;213",
+}
+
+
+def colour_of(member):
+    """The SGR parameters for a member's assigned colour, or "" for none.
+
+    Empty covers three cases that all want the same handling: the lead (no
+    colour is assigned to it), an older config written before the field
+    existed, and a value this map has never heard of."""
+    return COLOUR_SGR.get((member or {}).get("colour") or "", "")
+
 
 def snapshot():
     """Everything the picker needs, read once.
@@ -262,6 +305,10 @@ def snapshot():
             m["label"] = overrides.get(
                 m["name"], LEAD_LABEL if m["is_lead"] else MEMBER_LABEL
             )
+            # Resolved once, here, so neither renderer has to reach for this
+            # module to draw a member — and so the row list and the preview
+            # of that row cannot disagree about what colour somebody is.
+            m["sgr"] = colour_of(m)
             at = active_task_of(ts, m["name"])
             # activeForm is the present-tense phrasing the task list keeps
             # for exactly this purpose ("Fixing pyright type errors"), so

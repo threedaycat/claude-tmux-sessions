@@ -471,11 +471,59 @@ guarantee no path returns an empty name.
 
 **Rows.** A team adds no rows at all. It is summarised on the header of the
 session it is running in — `▾ $7 7  ✔ 1  ▶ 1  编队 队员 3 · 待领 2` — and
-its members are annotated in place on the pane rows they already had, with
-a cyan role tag taking the first cells of the name column. A *prefix*, not
-a new column: a real column would have to be padded on every row in the
-list, so turning teams on would visibly reflow sessions that have nothing
-to do with them.
+its members are annotated in place on the pane rows they already had. The
+annotation spends **no columns**: a member's name is simply printed in the
+colour the official roster assigned that member, and nothing is added to
+the row.
+
+This was a four-cell word (`队员`) in front of the name for three commits,
+and the word was the wrong trade. The name column is the only one in this
+list that ever runs out of room, and the tag spent a fifth of it on every
+member row to repeat, once per row, what the session header above already
+said once. Colour costs nothing, and it says something the word could not:
+*which* teammate, not merely that there is one. The eight names Claude Code
+assigns from — `red blue green yellow purple orange pink cyan` — are the
+whole vocabulary, translated to SGR in `agent_teams.COLOUR_SGR`, one map so
+that a member cannot be one colour in the list and another in the preview.
+
+**Colour is never the only thing carrying it**, which is the condition for
+dropping the word at all. Three signals survive with no colour at all, and
+the first two are absolute rather than a comparison against a neighbour:
+
+| | signal | holds when |
+|---|---|---|
+| 1 | no number in the gutter — every other pane row has one | always |
+| 2 | `j`/`k` walks straight past the row | always (not under `f`) |
+| 3 | the pane preview names the team and the member in words | always |
+| 4 | the indent | there is a non-member row nearby to read it against |
+| 5 | the colour | the roster's value is one this map knows |
+
+An unrecognised colour (the palette gains a ninth name, a config is
+hand-edited) loses signal 5 and keeps the rest, so nothing may key off the
+map being non-empty.
+
+> **Signal 3 is a debt this change took on, and it is paid by a different
+> change.** The pane preview did name the team in words all along, and the
+> words were scrolled off the bottom of the window where nobody could read
+> them — see ["Why the bar is under the screen"](#why-the-bar-is-under-the-screen-and-not-over-it).
+> Dropping the word `队员` was only defensible once that was fixed, so the
+> two are one decision wearing two commits. **Reverting the preview fix
+> alone silently takes a signal away from this table**; if it ever has to
+> go, the tag comes back with it.
+
+> **This repo emits ANSI unconditionally, everywhere.** `NO_COLOR` is not
+> honoured by any of it — not the headers, not the status labels, not the
+> meters — so it is not honoured here either. That is a whole-repo item
+> nobody has done, not a gap in this feature: making one member's name the
+> single monochrome thing in a coloured list would be worse than the
+> inconsistency it fixed. It is also exactly why signals 1 and 2 above are
+> required to be absolute — on a terminal that drops colour, they are what
+> is left.
+
+The session header keeps the word `队员` in `编队 队员 3`. That is a count,
+not a per-row tag: it is paid once per session rather than once per member,
+and it is the plain-text statement that this session has teammates in it at
+all — which is what makes signals 1 and 4 legible instead of mysterious.
 
 This started as a two-line block of its own above the list, and folding it
 into the session header removed a whole row kind (`$5 == "team"`) along
@@ -500,9 +548,13 @@ stops on — the same treatment as the `⋯ 收起 N 个` line, reached by a
 different route because a teammate keeps its pane id in field 2 and so
 can't be excluded by the absence of one.
 
-They also step one level further right than everything else, paid for out
+They also step four cells further right than everything else, paid for out
 of the name column so the age and the free-form tail stay on the x they
-have everywhere else in the list.
+have everywhere else in the list. Four and not two because the role tag's
+five cells were freed: paying four of them back into the indent moves the
+status label — the one part of the row sitting at a fixed x on every other
+line — twice as far as before, and still leaves a member's name column
+wider than the tag left it.
 
 The reason is that a teammate row and its lead were competing for the same
 `j`/`k` step, and the lead is the one worth stopping on: the teammates
@@ -557,11 +609,16 @@ that rebuilds the list into nothing.
 See ["The empty list, and `{n}`"](#the-empty-list-and-n) for why an empty
 list is a state worth this much trouble to avoid.
 
-**`$CLAUDE_TMUX_TEAM_LABELS`** names a JSON file mapping member name to the
-word shown in its role tag. The official data distinguishes exactly one
+**`$CLAUDE_TMUX_TEAM_LABELS`** names a JSON file mapping member name to a
+word for that member's role. The official data distinguishes exactly one
 role, the lead; every finer distinction is an editorial claim about one
 particular team. So the picker transports the value and never interprets
 it — the same seam as `$CLAUDE_TMUX_EXTRA_CMD`, and for the same reason.
+
+Since the row list stopped printing a role tag, those words appear in the
+**previews** only — the roster and the session cards, which have the room
+the name column never had. The seam is unchanged and so is the file format;
+what moved is where a word wide enough to be worth reading can be shown.
 
 **What isn't claimed.** A task shows against a member only when the task
 list records who owns it. No owner means the row falls back to its cwd and
