@@ -369,33 +369,101 @@ def ctx_bar(model, ctx, cells=10):
     return s
 
 
-def pane_team_lines(pane, width, limit=4):
-    """The few lines that say a pane is not working alone, printed above
-    its status bar in the pane preview.
+def teams_of_session(session, data, teams_snap):
+    """Which teams have a member pane sitting in this tmux session.
 
-    Capped at `limit` lines and every one of them conditional: this sits on
-    top of a live screen dump, which is what the preview is actually for,
+    Derived exactly the way `list-rows.sh` derives it — from the panes,
+    because the roster records no session — so the preview cannot claim a
+    team the session header above it doesn't show. The one difference is
+    the source of a pane's session: the row list has live tmux open
+    already, this reads the name the hooks recorded. They disagree only for
+    a pane that has been moved between tmux sessions since its last status
+    update, and paying a tmux round-trip on a path that runs at every
+    cursor stop to close that gap is the wrong trade."""
+    if not session or not teams_snap:
+        return []
+    out = set()
+    for p, m in teams_snap["by_pane"].items():
+        e = data.get(p)
+        if e and not e.get("archived") and (e.get("session") or "") == session:
+            out.add(m["team"])
+    return sorted(out)
+
+
+def pane_team_lines(pane, data, width, limit=4):
+    """The few lines that say a pane is not working alone, printed with its
+    status bar under the live screen in the pane preview.
+
+    Capped at `limit` lines and every one of them conditional: this sits
+    against a live screen dump, which is what the preview is actually for,
     so it may only spend rows when it has something to say. A member with
     no queued messages and no claimed task gets one line, not four with two
-    of them empty — a blank labelled slot reads as louder than no slot."""
+    of them empty — a blank labelled slot reads as louder than no slot.
+
+    Two cases, because a team has two kinds of pane in it:
+
+      - **the pane is a member.** Say which member, and what it is on.
+      - **the pane is not, but its session hosts a team.** Then this is the
+        lead's pane, or one sitting beside it — "which one is the lead" is
+        not knowable, since a lead's roster entry holds the literal string
+        `leader` where a pane id belongs, so the honest test is the session
+        rather than the pane. One line, the same counts the session header
+        carries, so that looking at a lead's screen answers "and how is the
+        team doing" without going back to the list. The roster itself is
+        deliberately *not* repeated here: the session header's preview
+        already carries it in full, and rebuilding it against a live screen
+        would be the duplication that folding the team block removed."""
     teams_snap = load_teams()
     if not teams_snap:
         return
     m = teams_snap["by_pane"].get(pane)
-    if not m:
+    if m:
+        lines = []
+        head = f"编队 {m['team']} · {m['label']} {m['name']}"
+        if m.get("type"):
+            head += f" · 类型 {m['type']}"
+        lines.append(CYAN + clip(head, width) + RESET)
+        if m.get("doing"):
+            num = f"#{m['doing_id']} " if m.get("doing_id") else ""
+            lines.append("在做 " + clip(num + m["doing"], width - 5))
+        if m.get("inbox"):
+            lines.append(f"信箱 {m['inbox']} 条未读")
+        for ln in lines[:limit]:
+            print(ln)
         return
-    lines = []
-    head = f"编队 {m['team']} · {m['label']} {m['name']}"
-    if m.get("type"):
-        head += f" · 类型 {m['type']}"
-    lines.append(CYAN + clip(head, width) + RESET)
-    if m.get("doing"):
-        num = f"#{m['doing_id']} " if m.get("doing_id") else ""
-        lines.append("在做 " + clip(num + m["doing"], width - 5))
-    if m.get("inbox"):
-        lines.append(f"信箱 {m['inbox']} 条未读")
-    for ln in lines[:limit]:
-        print(ln)
+
+    session = (data.get(pane) or {}).get("session") or ""
+    by_team = {t["team"]: t for t in teams_snap["teams"]}
+    for team in teams_of_session(session, data, teams_snap)[:limit]:
+        t = by_team.get(team)
+        if not t:
+            continue
+        c = t["counts"]
+        bits = []
+        n_mate = sum(1 for x in t["members"] if not x["is_lead"])
+        if n_mate:
+            bits.append(f"{agent_teams_module().MEMBER_LABEL} {n_mate}")
+        # The same four counts the session header carries, in the same
+        # order and with zeroes dropped the same way — this is a second
+        # view of one number, not a second number.
+        for key, word in (("in_progress", "在做"), ("pending", "待领"),
+                          ("blocked", "挡住")):
+            if c.get(key):
+                bits.append(f"{word} {c[key]}")
+        inbox = sum(x["inbox"] for x in t["members"])
+        if inbox:
+            bits.append(f"信箱 {inbox}")
+        head = f"编队 {team}"
+        if bits:
+            head += " · " + " · ".join(bits)
+        print(CYAN + clip(head, width) + RESET)
+
+
+def agent_teams_module():
+    """The already-imported team reader. load_teams() has run by the time
+    anything needs this, so the import is a dict lookup in sys.modules."""
+    import agent_teams
+    return agent_teams
 
 
 def team_board(team):
@@ -484,10 +552,15 @@ def pad(s, width):
 
 
 def pane_bar(pane):
-    """--pane mode: one Claude-Code-statusline-style line for a single
-    tracked pane, printed above the live screen dump in the pane preview
-    — status · model · context size (± % of the window) · status-aware elapsed
-    time · cwd, then a dim rule."""
+    """--pane mode: a Claude-Code-statusline-style summary for one tracked
+    pane — status · model · context size (± % of the window) · status-aware
+    elapsed time · cwd — preceded by a dim rule and by whatever
+    `pane_team_lines` has to say.
+
+    **Printed below the screen dump, not above it, and that is the whole
+    reason it is visible.** `preview-row.sh` writes the captured screen
+    first; see the note in that file for why the top of a pane preview is
+    not a place anything can be put."""
     try:
         with open(STATUS_FILE) as f:
             data = json.load(f)
@@ -501,8 +574,12 @@ def pane_bar(pane):
     age = int(time.time() - e.get("updated_at", time.time()))
     model, ctx, _recap, _task = transcript_info(e, want_text=False)
 
-    width0 = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
-    pane_team_lines(pane, width0)
+    width = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
+    # A reset first: the screen dump above arrives via `capture-pane -e` and
+    # can end mid-attribute — an unterminated colour there would otherwise
+    # bleed into every line of this bar.
+    print(RESET + DIM + "─" * width + RESET)
+    pane_team_lines(pane, data, width)
 
     bits = []
     if model:
@@ -512,11 +589,9 @@ def pane_bar(pane):
         bits.append(cb)
     bits.append(fmt_age(rank, age))
 
-    width = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
     cwd = e.get("cwd") or ""
     line = f"{label}  " + " · ".join(bits) + f"  {DIM}{clip(cwd, width)}{RESET}"
     print(line)
-    print(DIM + "─" * width + RESET)
 
 
 def main():
