@@ -421,34 +421,53 @@ if team_only_file and teams_snap:
     except OSError:
         pass
 
-# Role label, as the first four cells of the name column rather than a
-# column of its own. A real column would have to be padded on *every* row
-# in the list, including the ones with no team anywhere near them, so
-# turning Agent Teams on would visibly reflow sessions that have nothing to
-# do with it. As a prefix, only member rows change and everything else is
-# untouched — and since the name column already starts at a fixed x, the
-# labels line up into a scannable stripe for free.
-ROLE_W = 5      # 4 cells of label + the separating space
-LEAD_COLOUR = "1;36"     # bold cyan, matching the session headers
-MEMBER_COLOUR = "36"     # plain cyan — same family, one step quieter
 # How much further right a teammate's row starts than everything else, so
 # it reads as belonging to the lead above it rather than standing beside
 # it. Taken back out of the name column rather than added to the row, so
 # the indent moves the left edge only: the age column and the free-form
 # tail stay at the same x as every other row. Widening the row instead
-# would make those columns ragged wherever a team happens to be — the very
-# cost the role tag was made a prefix to avoid.
+# would make those columns ragged wherever a team happens to be.
 #
 # Spaces, not a box-drawing or arrow glyph: everything in that range is
 # East-Asian Ambiguous and renders double-width on a CJK-configured
 # terminal, which would push the whole row out of line.
-MATE_INDENT = 2
+#
+# Two cells while a word-shaped role tag was also on the row; four now that
+# it isn't. The five cells the tag used to hold are freed, so paying four of
+# them back into the indent still leaves a member's name column *wider* than
+# it was, and moves the one part of the row that sits at a fixed x on every
+# other line — the status label — twice as far as before.
+MATE_INDENT = 4
 
 
-def role_prefix(member):
-    """The cyan role tag that opens a member's name column."""
-    colour = LEAD_COLOUR if member.get("is_lead") else MEMBER_COLOUR
-    return f"\033[{colour}m" + pad(clip(member.get("label") or "", 4), ROLE_W) + "\033[0m"
+def name_colour(member):
+    """The SGR wrapper for a member's name, or a plain string.
+
+    A teammate's row used to open with a four-cell word ("队员") saying it
+    was one. That word cost every member row five cells of the only column
+    that ever runs out of them, to repeat on each row of a team what the
+    row's position under its lead, its empty number gutter and its session
+    header already said once. It is replaced by the colour the official
+    roster hands each teammate at spawn — the one per-member identity that
+    costs no columns, and one that says *which* teammate rather than just
+    "a teammate".
+
+    Colour cannot be the only thing carrying that, and here it isn't. Four
+    other signals survive the word, three of them absolute rather than a
+    comparison against a neighbouring row:
+
+      - **no number in the gutter.** Every other pane row shows one; a
+        teammate's is blank. Visible with no colour at all.
+      - **`j`/`k` walks straight past it**, which no other pane row does.
+      - **the pane preview names the team and the member in words**
+        (`session-digest.py --pane`).
+      - the indent, which is the relative one: it needs a non-teammate row
+        nearby to read against, and under `f` there may not be one.
+
+    An unrecognised colour degrades to no colour, which loses the fourth
+    signal and keeps the other three."""
+    sgr = member.get("sgr") or ""
+    return (f"\033[{sgr}m", "\033[0m") if sgr else ("", "")
 
 
 def member_tail(member, counts):
@@ -614,23 +633,20 @@ for s in sessions_sorted:
             continue
         if team_only and not member:
             continue
-        # The name column, with its role tag when this pane is on a team.
-        # The tag eats the first ROLE_W cells of the column rather than
-        # widening it, so a member row and an ordinary row still put their
-        # names at the same x — the tag reads as a stripe down the left of
-        # the column instead of shifting everything after it.
+        # The name column. For a member the name *is* the marker, so it is
+        # printed in that member's own colour and at full width — no prefix
+        # eating the front of the column, and nothing added to the row, so a
+        # member row and an ordinary row still put their names at the same x.
+        #
+        # It is no longer dimmed either. Dimming was right while a coloured
+        # role tag sat in front of it and was the part worth scanning for;
+        # with the tag gone the name is that part, and receding is the one
+        # thing it must not do.
         if member:
-            name_cell = role_prefix(member) + col(wname, NAME_W - ROLE_W)
+            on, off = name_colour(member)
+            width = NAME_W - (MATE_INDENT if is_mate else 0)
+            name_cell = on + col(wname, width) + off
             trailing = member_tail(member, counts_of.get(member["team"], {}))
-            if is_mate:
-                # A teammate's own name recedes; the role tag in front of it
-                # keeps its colour. The tag is the part worth scanning for —
-                # dimming it too would erase the only signal the row has.
-                # The name column gives up MATE_INDENT cells to pay for the
-                # indent, so everything to its right stays put.
-                name_cell = (role_prefix(member) + "\033[2m"
-                             + col(wname, NAME_W - ROLE_W - MATE_INDENT)
-                             + "\033[0m")
         else:
             name_cell = col(wname, NAME_W)
             trailing = ""
@@ -649,8 +665,10 @@ for s in sessions_sorted:
             # the whole thing in one wrap (no embedded colour codes that
             # would reset the dim early), so it recedes but stays
             # selectable. "✔ DONE  " matches the icon+label width above.
-            # A member's role tag is dropped here rather than dimmed: its
-            # colour is the whole signal, and this row's point is to recede.
+            # A member's name colour is dropped here rather than dimmed
+            # alongside the rest: this row's point is to recede, and the
+            # signals that survive it are the ones that cost no ink — the
+            # blank gutter and the indent, both still below.
             #
             # The gutter follows the same rule as every other row: a
             # teammate has no number, so it gets blanks, and the same

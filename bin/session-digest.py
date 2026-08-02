@@ -418,7 +418,14 @@ def team_board(team):
             tail.append(num + m["doing"])
         if m.get("inbox"):
             tail.append(f"✉{m['inbox']}")
-        row = (f"{CYAN}{pad(m['label'], 5)}{RESET}{pad(clip(m['name'], 15), 16)}"
+        # The name carries the member's own colour, the same one its row in
+        # the list is printed in. That is where the association is learned:
+        # the list has room for a colour and not for a word, so the surface
+        # that does have room has to be the one that says which is which.
+        on = f"\033[{m['sgr']}m" if m.get("sgr") else ""
+        off = RESET if on else ""
+        row = (f"{CYAN}{pad(m['label'], 5)}{RESET}"
+               f"{on}{pad(clip(m['name'], 15), 16)}{off}"
                f"{label} {pad(when, 15)}{DIM}{m['pane'] or ''}{RESET}")
         print(clip(row, width + 40))
         if tail:

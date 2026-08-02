@@ -212,8 +212,9 @@ Then remove the four `tmux_status_update.py` hook entries from
 
 ### Agent Teams
 
-If you run Claude Code teams, the picker labels each teammate's pane with its
-real name and role instead of the shared window title, and summarises the team
+If you run Claude Code teams, the picker names each teammate's pane after the
+teammate — its real name instead of the shared window title — and summarises
+the team
 on the header of the session it's running in — no separate block, since a team
 and the session it was spawned in are the same thing. Selecting that header
 gives you a two-part preview: the full roster and shared task list on top —
@@ -225,6 +226,13 @@ selected: `j`/`k` step over them and they have no jump number, so a team costs
 one stop in the list instead of one per member. The lead is the useful
 destination anyway — its teammates are in the same tmux window, a native
 pane-switch away. Press `f` when you do want to move among them directly.
+
+The name is printed in the colour Claude Code assigned that teammate, so
+saying "this pane is on a team" costs the list no columns at all — the name
+column is the one that runs out of room, and a word in front of every member
+row was spending a fifth of it to repeat what the session header says once.
+Colour is never the only thing carrying it: a teammate row also has no number
+in its gutter, `j`/`k` steps over it, and its preview names the team in words.
 
 The team rows cost nothing if you don't use teams: with no `~/.claude/teams/`
 directory the picker does a single `stat`, adds no row and annotates none.
@@ -238,8 +246,8 @@ titles concatenated — so those rows now show each pane's own name instead of
 the same jumble repeated.
 
 Point `CLAUDE_TMUX_TEAM_LABELS` at a JSON file (`{"member-name": "word"}`) to
-choose the word in each member's role tag. The picker prints whatever you put
-there and doesn't interpret it.
+choose the word used for each member's role in the previews. The picker prints
+whatever you put there and doesn't interpret it.
 
 ## Why not just…
 
