@@ -448,7 +448,15 @@ def pane_team_lines(pane, data, width, limit=4):
         lines.append(CYAN + clip(head, width) + RESET)
         if m.get("doing"):
             num = f"#{m['doing_id']} " if m.get("doing_id") else ""
-            lines.append("在做 " + clip(num + m["doing"], width - 5))
+            doing = "在做 " + clip(num + m["doing"], width - 5)
+            # What that task is still waiting on, appended the same way and
+            # with the same wording the shared task list uses. It was only
+            # ever printed there, so a member holding blocked work looked
+            # busy from its own pane and stuck from the session header —
+            # one fact, two surfaces, and only one of them said it.
+            if m.get("doing_waiting"):
+                doing += DIM + f"  等 #{m['doing_waiting'][0]}" + RESET
+            lines.append(doing)
         if m.get("inbox"):
             lines.append(f"信箱 {m['inbox']} 条未读")
         for ln in lines[:limit]:
@@ -555,17 +563,16 @@ def team_board(team):
         return
     print(DIM + "─" * width + RESET)
     print(f"共享任务表(未完成 {len(ts)})")
-    # "Still blocking" is asked the positive way round — is this id among the
-    # tasks that are open — because finishing a task can *delete its file*,
-    # and "not in the completed set" then answers yes for work that is done
-    # and gone. See agent_teams.task_counts, which decides the same thing for
-    # the counts; the two must not drift, or the header says `挡住 1` while
-    # the list below it says `待领`.
-    open_ids = {str(x.get("id")) for x in t["tasks"] if x.get("status") != "completed"}
+    # Borrowed, not reimplemented: "is this blocker still blocking" is one
+    # question with one answer, and it is asked from here, from the counts,
+    # and from a member's current task. A local copy of the set comprehension
+    # is how the header came to read `挡住 1` above a list that read `待领`.
+    at = agent_teams_module()
+    open_ids = at.open_task_ids(t["tasks"])
     for x in ts[:12]:
         owner = x.get("owner") or ""
         status = x.get("status")
-        waiting = [b for b in x.get("blockedBy") or [] if str(b) in open_ids]
+        waiting = at.blockers_of(x, open_ids)
         word = "在做" if status == "in_progress" else ("挡住" if waiting else "待领")
         # An unclaimed task shows a dash rather than a guess. The value of
         # this column is that you can act on it; a name that might be wrong

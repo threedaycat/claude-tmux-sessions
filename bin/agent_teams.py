@@ -197,6 +197,39 @@ def active_task_of(ts, name):
     return None
 
 
+def open_task_ids(ts):
+    """The ids of the tasks that are not finished — the set every
+    "is this still blocking?" question is answered against.
+
+    **A blocker only still blocks if it is on disk and unfinished**, and
+    that has to be asked the positive way round. The negative form, "is
+    this id missing from the completed tasks", is not equivalent, because
+    the task list is one file per task and **finishing a task can delete
+    its file**: a blocker that finished and was cleaned up is missing from
+    the completed set too, so everything depending on it flips from `待领`
+    to `挡住` and the picker starts announcing that work is held up by
+    something that is in fact done. Deletion is the normal end of a task's
+    life, so that is the common case, not an edge one.
+
+    An id naming no file at all is therefore treated as **finished**. The
+    error this rules out is over-reporting, which is the expensive
+    direction: `挡住` is the count that sends somebody looking, and sending
+    them after a task that has been deleted costs more than a missed
+    blocker would.
+
+    One function rather than the same set comprehension in each caller,
+    because this exact question is asked from three places — the counts,
+    a member's current task, and the shared task list in the preview — and
+    the last time two of them disagreed the header read `挡住 1` above a
+    list that read `待领`."""
+    return {str(t.get("id")) for t in ts if t.get("status") != "completed"}
+
+
+def blockers_of(task, open_ids):
+    """Which of a task's `blockedBy` entries are still holding it up."""
+    return [str(b) for b in (task or {}).get("blockedBy") or [] if str(b) in open_ids]
+
+
 def task_counts(ts):
     """Just the four numbers the picker actually prints.
 
@@ -204,29 +237,14 @@ def task_counts(ts):
     two very different situations: work nobody has picked up, and work
     nobody *can* pick up until something else lands. Collapsing them reads
     as "this team is idle" when the truth is "this team is waiting".
-
-    **A blocker is only still blocking if it is on disk and unfinished.**
-    The test is deliberately written the positive way round — "is this id
-    among the open tasks" — and not "is it missing from the completed
-    ones", because the two are not equivalent under the way the official
-    task list is actually stored. One file per task, and **finishing a task
-    can delete its file**. Asking "is it absent from the completed set" then
-    answers yes for a task that finished and was cleaned up, and every task
-    that depended on it flips from `待领` to `挡住` — the picker starts
-    announcing that work is held up by something that is in fact done. That
-    is not an edge case; deletion is the normal end of a task's life.
-
-    So an id that names no file at all is treated as **finished**, not as
-    pending-and-therefore-blocking. The failure mode this rules out is
-    over-reporting, which is the expensive direction: `挡住` is the count
-    that makes someone go looking, and sending them after a task that no
-    longer exists costs more than a missed one would."""
-    open_ids = {str(t.get("id")) for t in ts if t.get("status") != "completed"}
+    Whether something is still blocking is `open_task_ids`' question, and
+    the reasoning lives there."""
+    open_ids = open_task_ids(ts)
     c = {"pending": 0, "blocked": 0, "in_progress": 0, "completed": 0}
     for t in ts:
         s = t.get("status")
         if s == "pending":
-            waiting = [b for b in t.get("blockedBy") or [] if str(b) in open_ids]
+            waiting = blockers_of(t, open_ids)
             c["blocked" if waiting else "pending"] += 1
         elif s in c:
             c[s] += 1
@@ -323,6 +341,7 @@ def snapshot():
     for team in team_names():
         ms = members(team)
         ts = tasks(team)
+        open_ids = open_task_ids(ts)
         for m in ms:
             m["team"] = team
             m["inbox"] = inbox_depth(team, m["name"])
@@ -340,6 +359,13 @@ def snapshot():
             # pane doing right now".
             m["doing"] = (at or {}).get("activeForm") or (at or {}).get("subject") or ""
             m["doing_id"] = str((at or {}).get("id") or "")
+            # A claimed task can still be waiting on something — nothing
+            # stops a member picking up work whose prerequisite hasn't
+            # landed. The shared task list in the preview has always said
+            # so; this is what lets the member's own line say it too,
+            # rather than the same fact being visible from one surface and
+            # not the other.
+            m["doing_waiting"] = blockers_of(at, open_ids)
             if m["pane"]:
                 by_pane[m["pane"]] = m
         out.append({

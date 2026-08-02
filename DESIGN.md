@@ -771,11 +771,19 @@ this rules out is over-reporting, and that is the expensive direction:
 `挡住` is the count that sends somebody looking, and sending them after a
 task that has been deleted costs more than a missed blocker would.
 
-Two call sites decide this — `agent_teams.task_counts` for the header and
-pane-summary counts, `session-digest.team_board` for the shared task list —
-and they must not drift, or the header reads `挡住 1` above a list that
-reads `待领`. Same class of problem as the colour map: one concept, two
-implementations, and the only defence is that both are written down here.
+**Three** call sites ask this — the counts on the session header, the
+shared task list in the preview, and a member's own current task — so it is
+one function, `agent_teams.open_task_ids`, and not a set comprehension
+copied about. Writing both copies down here was the defence while there
+were two; having one is the better one. Same class of problem as the colour
+map, and the failure it prevents is the header reading `挡住 1` above a list
+that reads `待领`.
+
+A member's line in the pane preview carries `等 #N` too, in the wording the
+shared task list uses. Nothing stops somebody claiming work whose
+prerequisite hasn't landed, and until that line existed such a member
+looked busy from its own pane and stuck from the session header — one fact
+that only one of the two surfaces would tell you.
 
 ## The live preview
 
