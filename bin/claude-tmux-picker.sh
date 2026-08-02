@@ -108,28 +108,43 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${TEAM_F
 # (letters then type normally, Esc hides it and drops back to
 # navigation) — all dispatched through skip-header.sh, which branches on
 # FZF_INPUT_STATE (hidden in navigation, enabled while searching).
+#
+# `{n}` is quoted in every bind below, and the quotes are load-bearing.
+# fzf substitutes it with the index of the item under the cursor, but an
+# empty list has no item, and the placeholder then expands to nothing at
+# all. Unquoted, the shell drops that empty word and every argument after
+# it shifts one place left: `skip-header.sh {n} esc` arrives as
+# `skip-header.sh esc`, so the script reads `esc` where it expects a row
+# number and the key it was told about goes missing. That turned every
+# transform-bound key — including Esc and q — into a no-op the moment the
+# list came up empty, which is to say it left no way out of the picker.
+# Quoted, the empty index survives as an empty first argument and the rest
+# stay where they belong.
+#
+# The `load` bind at the bottom passes a literal 0 rather than `{n}`, so it
+# never had the problem and needs no quotes.
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --header="$PANE_HEADER"
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
   --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,border-left,wrap,follow"
   --preview-label=' Claude 实时画面 '
-  --bind "down:transform:$BIN_DIR/skip-header.sh {n} down"
-  --bind "up:transform:$BIN_DIR/skip-header.sh {n} up"
-  --bind "left:transform:$BIN_DIR/skip-header.sh {n} left"
-  --bind "right:transform:$BIN_DIR/skip-header.sh {n} right"
-  --bind "j:transform:$BIN_DIR/skip-header.sh {n} down j"
-  --bind "k:transform:$BIN_DIR/skip-header.sh {n} up k"
-  --bind "h:transform:$BIN_DIR/skip-header.sh {n} left h"
-  --bind "l:transform:$BIN_DIR/skip-header.sh {n} right l"
-  --bind "/:transform:$BIN_DIR/skip-header.sh {n} slash /"
-  --bind "a:transform:$BIN_DIR/skip-header.sh {n} showall a"
+  --bind "down:transform:$BIN_DIR/skip-header.sh \"{n}\" down"
+  --bind "up:transform:$BIN_DIR/skip-header.sh \"{n}\" up"
+  --bind "left:transform:$BIN_DIR/skip-header.sh \"{n}\" left"
+  --bind "right:transform:$BIN_DIR/skip-header.sh \"{n}\" right"
+  --bind "j:transform:$BIN_DIR/skip-header.sh \"{n}\" down j"
+  --bind "k:transform:$BIN_DIR/skip-header.sh \"{n}\" up k"
+  --bind "h:transform:$BIN_DIR/skip-header.sh \"{n}\" left h"
+  --bind "l:transform:$BIN_DIR/skip-header.sh \"{n}\" right l"
+  --bind "/:transform:$BIN_DIR/skip-header.sh \"{n}\" slash /"
+  --bind "a:transform:$BIN_DIR/skip-header.sh \"{n}\" showall a"
   # `f` narrows the list to the teams and their panes. Bound
   # unconditionally so that while the search input is open it still types
   # an f; with no team on the machine the transform returns `ignore` and
   # the key is inert, like any other letter nothing is bound to.
-  --bind "f:transform:$BIN_DIR/skip-header.sh {n} teamonly f"
-  --bind "p:transform:$BIN_DIR/skip-header.sh {n} preview p"
+  --bind "f:transform:$BIN_DIR/skip-header.sh \"{n}\" teamonly f"
+  --bind "p:transform:$BIN_DIR/skip-header.sh \"{n}\" preview p"
   # `t` opens the token page. Unlike every other key here, the work can't
   # be done by the transform: actions printed by transform go through the
   # same parser as the --listen HTTP payload, which refuses execute() as
@@ -138,10 +153,10 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   # only for its other job: while the search input is open, `t` has to
   # type a t. token-page.sh returns immediately in that state (it reads
   # $FZF_INPUT_STATE, which fzf exports to every child).
-  --bind "t:transform($BIN_DIR/skip-header.sh {n} tokens t)+execute($BIN_DIR/token-page.sh 1)"
-  --bind "q:transform:$BIN_DIR/skip-header.sh {n} quit q"
-  --bind "esc:transform:$BIN_DIR/skip-header.sh {n} esc"
-  --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh {n} archive"
+  --bind "t:transform($BIN_DIR/skip-header.sh \"{n}\" tokens t)+execute($BIN_DIR/token-page.sh 1)"
+  --bind "q:transform:$BIN_DIR/skip-header.sh \"{n}\" quit q"
+  --bind "esc:transform:$BIN_DIR/skip-header.sh \"{n}\" esc"
+  --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh \"{n}\" archive"
   --bind "start:bg-transform-footer:$BIN_DIR/usage-footer.sh")
 
 # Digits type a pane-row number (the gutter number) and jump there — see
@@ -152,7 +167,7 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
 # through skip-header.sh so that while search is open the same keys type
 # into the query instead.
 for d in 0 1 2 3 4 5 6 7 8 9; do
-  fzf_args+=(--bind "$d:transform:$BIN_DIR/skip-header.sh {n} digit $d")
+  fzf_args+=(--bind "$d:transform:$BIN_DIR/skip-header.sh \"{n}\" digit $d")
 done
 
 # Initial cursor. Everything goes through skip-header.sh's `init` rather than

@@ -34,6 +34,53 @@ cur="${1:-0}"
 dir="${2:-down}"
 key="${3:-}"
 
+# fzf replaces {n} with the index of the item under the cursor — but an
+# EMPTY list has no item under the cursor, and fzf then drops the
+# placeholder instead of substituting anything. The argument list arrives
+# one short and every argument shifts left: `{n} esc` becomes `esc`, so the
+# direction lands in $1 where a number belongs and $2 falls back to its
+# default, `down`.
+#
+# That turned Esc into a down-arrow and q into a crash — `orig=$((cur + 1))`
+# on a $cur holding the word `quit` trips `set -u`, which exits before the
+# script prints an action, so fzf is handed nothing and the key does
+# nothing at all. With an empty list on screen there was then no way out of
+# the picker short of killing the pane.
+#
+# The empty index actually arrives in two different shapes, and it is worth
+# knowing both because only one of them is dramatic:
+#
+#   no items at all   the placeholder is dropped, the argument count drops
+#                     with it, and everything shifts left. This is the one
+#                     that broke the keyboard.
+#   items, 0 matches  the placeholder is substituted with an empty string,
+#                     the argument count is unchanged, and `${1:-0}` has
+#                     always absorbed it quietly.
+#
+# Quoting `{n}` in the picker's binds turns the first shape into the second,
+# so past that fix both arrive here as an empty first argument. The
+# normalisation below stays anyway: it costs one comparison, and it is what
+# makes this script safe to call with arguments that came from anywhere.
+#
+# Normalised here, once, rather than at either call site, because an empty
+# list is reachable by more than one route: `f` filtering everything away
+# (below), and — with no team on the machine at all — a `/` search that
+# matches nothing, which empties fzf's *view* while the row list behind it
+# is untouched. {n} is always a number, so a $1 that isn't one means the
+# placeholder was dropped and the real arguments begin there.
+# The pattern accepts a leading minus even though a row index is never
+# negative, because fzf does hand out -1 for "no current item" and the
+# question here is only ever "was this an index, or the next argument?".
+# A minus sign answers that as clearly as a digit does; treating -1 as a
+# stray word instead would shift arguments that never moved, and the
+# direction would end up holding `-1`.
+if ! [[ "$cur" =~ ^-?[0-9]+$ ]]; then
+  dir="${1:-down}"
+  key="${2:-}"
+  cur=0
+fi
+[ "$cur" -lt 0 ] && cur=0
+
 # The pane-mode header is computed by claude-tmux-picker.sh and exported,
 # because whether it advertises `f` depends on whether any team exists —
 # and that is known once, at startup, not on every keypress. The literal
@@ -45,6 +92,10 @@ key="${3:-}"
 PANE_HEADER="${PANE_HEADER:-j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出}"
 SESSION_HEADER='j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
 SEARCH_HEADER='输入过滤 · Enter 跳转 · Esc 返回 j/k 导航'
+# Shown when `f` had nothing to narrow to, or when the rows it was showing
+# went away. No parentheses in this string: fzf parses `change-header(…)`
+# by matching them, so one here would truncate the header at that point.
+TEAM_EMPTY_HEADER='编队里没有可跳转的 pane · 已显示完整列表 · j/k 浏览 · q 退出'
 
 mode="pane"
 if [ -n "${MODE_FILE:-}" ] && [ -s "$MODE_FILE" ]; then
@@ -77,7 +128,16 @@ if [ "${FZF_INPUT_STATE:-disabled}" = "enabled" ]; then
     up)    echo "up" ;;
     left)  echo "backward-char" ;;
     right) echo "forward-char" ;;
-    esc)   echo "clear-query+disable-search+hide-input+change-header($(mode_header))" ;;
+    # `search()` between clearing the query and disabling search is load-
+    # bearing, not decoration. `clear-query` empties the query but the
+    # re-filter it schedules is dropped by the `disable-search` arriving in
+    # the same batch, so Esc used to leave the list still showing whatever
+    # the query had narrowed it to — and when the query matched nothing, it
+    # left it showing nothing at all. An empty list is the state fzf stops
+    # substituting {n} in, which is what made that particular Esc
+    # unescapable. `search()` re-runs the search against the now-empty
+    # query and forces the full list back before search is switched off.
+    esc)   echo "clear-query+search()+disable-search+hide-input+change-header($(mode_header))" ;;
     *)     echo "ignore" ;;
   esac
   exit 0
@@ -103,6 +163,47 @@ remember_cursor() {
   old_num=$(awk -F'\t' -v n="$n" 'NR == n { print $4 }' "$ROWS_FILE")
 }
 
+# Rebuild the row cache, and refuse to leave it empty.
+#
+# A list with no rows is a bad place to be: nothing to put the cursor on
+# and nothing for Enter. It used to be far worse than that — it also took
+# the keyboard with it — but that is now handled separately and at a lower
+# level, by the argument normalisation at the top of this file and the
+# quoting of `{n}` in the picker's binds. Escaping an empty list is their
+# job. Not entering one needlessly is this function's.
+#
+# **No key can be exempted from the check, and in particular `a` cannot.**
+# `f` is the obvious cause, being the only thing that filters a populated
+# list down to nothing. But every rebuild re-reads the world, and the world
+# shrinks on its own: the last Claude in the list can exit while the picker
+# is sitting open, prune drops its row, and the next `a` rebuilds into
+# nothing with no filter involved at all. ctrl-x reaches the same place by
+# archiving the last row standing.
+#
+# So the emptiness need not arrive on the keypress that caused it, and need
+# not involve `f` — which is why this lives on the rebuild, the one path
+# every list-changing key goes through, instead of in any single key's
+# branch. Deciding it per rebuild is also what keeps it honest while state
+# moves underneath the picker between keypresses: a startup-time answer
+# goes stale the moment a teammate joins or is shut down.
+#
+# What it can actually fix is the filtered case: drop the filter, rebuild
+# without it. When the rows are gone for real — everything archived, every
+# Claude exited — there is nothing to recover and the list stays empty, on
+# purpose. That state is legitimate, and it is escapable.
+FILTER_DROPPED=0
+rebuild_rows() {
+  "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
+  if [ -s "$ROWS_FILE" ]; then
+    return 0
+  fi
+  if [ -n "${TEAM_FILE:-}" ] && [ "$(cat "$TEAM_FILE" 2>/dev/null)" = "1" ]; then
+    printf '0' > "$TEAM_FILE"
+    "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
+    FILTER_DROPPED=1
+  fi
+}
+
 # $1 = which way to fall back when the remembered row is no longer in the
 # list: `before` (nearest pane row at or above its old number) or `after`.
 reload_keeping_place() {
@@ -110,7 +211,7 @@ reload_keeping_place() {
     echo "reload($BIN_DIR/list-rows.sh)"       # standalone/debug: no cache to keep
     return 0
   fi
-  "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
+  rebuild_rows
   local pos
   pos=$(awk -F'\t' -v p="$old_pane" -v s="$old_session" -v num="$old_num" \
             -v prefer="$1" '
@@ -140,7 +241,12 @@ reload_keeping_place() {
       }
     }
   ' "$ROWS_FILE")
-  echo "reload-sync(cat '$ROWS_FILE')+pos(${pos:-1})"
+  # Say so when the filter was dropped underneath the keypress, or `f`
+  # reads as a key that silently does nothing. The header is restored by
+  # the next cursor move, which re-sends the header for its own mode.
+  local notice=""
+  [ "$FILTER_DROPPED" = 1 ] && notice="change-header($TEAM_EMPTY_HEADER)+"
+  echo "${notice}reload-sync(cat '$ROWS_FILE')+pos(${pos:-1})"
 }
 
 # fzf fires `load` every time the list finishes loading — including after
@@ -207,6 +313,20 @@ case "$dir" in
     # exports no TEAM_FILE, so this returns `ignore` and behaves exactly
     # like every other unbound letter. That is also why the header only
     # mentions `f` when there is something to filter.
+    #
+    # A team existing is *not* the same as `f` having something to show,
+    # and the picker's startup check can only answer the first. A team
+    # directory outlives its teammates, and the lead's own roster entry
+    # carries the literal string "leader" where a pane id would go, so it
+    # joins to no pane — a team whose teammates have all exited therefore
+    # still exists while contributing not one row. Turning the filter on
+    # there used to leave fzf with an empty list and no way out of it.
+    #
+    # The flip below is left unconditional and the emptiness is caught in
+    # rebuild_rows instead, which puts the flag back and rebuilds. That
+    # keeps the decision on the rebuilt rows — the only thing that actually
+    # answers "would this be empty" — rather than on a second guess at what
+    # list-rows.sh is about to do, which is how the two could disagree.
     if [ -z "${TEAM_FILE:-}" ]; then
       echo "ignore"
       exit 0
@@ -383,6 +503,17 @@ case "$dir" in
     idx="$orig"
     step=1
     ;;
+  *)
+    # A direction this script doesn't know. Every caller in the picker
+    # passes one of the five above, so reaching here means something
+    # upstream went wrong — and the useful response to that is to leave the
+    # cursor alone, not to fall through with `idx` unset and die on
+    # `set -u`. Dying here is the same failure this file exists to prevent:
+    # a transform that exits non-zero prints nothing, and a key that prints
+    # nothing does nothing, which is indistinguishable from a frozen picker.
+    idx="$orig"
+    step=1
+    ;;
 esac
 
 [ -n "${MODE_FILE:-}" ] && printf '%s' "$mode" > "$MODE_FILE"
@@ -418,6 +549,11 @@ case "$dir" in
     echo "change-header($PANE_HEADER)+pos($idx)"
     ;;
   *)
-    echo "pos($idx)"
+    # The header goes out with every cursor move, not just the mode
+    # switches. It is the same string that is already showing, so it costs
+    # a redraw of one line and changes nothing — except after a
+    # $TEAM_EMPTY_HEADER notice, which is how that notice clears itself
+    # without a second piece of per-instance state to remember it by.
+    echo "change-header($(mode_header))+pos($idx)"
     ;;
 esac
