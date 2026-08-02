@@ -100,6 +100,22 @@ if teams_snap is not None and not teams_snap["teams"]:
     teams_snap = None          # the directory exists but holds nothing readable
 members_by_pane = teams_snap["by_pane"] if teams_snap else {}
 
+# Level 1 of the naming chain: the name somebody chose for a session, which
+# Claude Code keeps in its own files rather than anywhere the hooks can see
+# (see claude_sessions.py). Gated on the same one stat as teams and for the
+# same reason — nobody without the directory reads a byte or imports a
+# module — except that this one is not a feature you switch on, so the
+# people it degrades for are the people who never renamed a session, and
+# for them the chain answers at level 2 or 3 exactly as before.
+manual_names = {}
+if bin_dir and os.path.isdir(os.path.join(_claude_home, "sessions")):
+    try:
+        sys.path.insert(0, bin_dir)
+        import claude_sessions
+        manual_names = claude_sessions.manual_names()
+    except Exception:
+        manual_names = {}      # a broken read means "no chosen names", never a broken list
+
 fmt = ("#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}"
        "\t#{pane_index}\t#{pane_current_path}\t#{pane_title}")
 try:
@@ -261,11 +277,12 @@ def display_name(pane, rec, window_name, pane_title, member):
 
       1. a hand-picked session name — the only source where somebody stated
          outright what this session is called, so it outranks everything
-         automatic. **Today this is always empty:** the status file has no
-         such field yet, so the lookup misses and level 2 answers. The slot
-         is here so that if the name ever starts being recorded, nothing in
-         this function has to change. It is not dead code — it is the
-         reason the rest of the chain won't need rewriting.
+         automatic. Read from Claude Code's own session records, keyed by
+         session id (see claude_sessions.py); it was a reserved empty slot
+         until those were found, because the status file has no such field
+         and neither does any hook payload. Falls through for every session
+         nobody renamed, which is most of them — a *generated* name is
+         deliberately not accepted here.
       2. the team roster's name — the only source that says *who* a pane
          is. Falls through when the pane isn't on a team, or is a lead
          (whose roster entry holds a placeholder where a pane id would go).
@@ -295,7 +312,7 @@ def display_name(pane, rec, window_name, pane_title, member):
     `or pane` is there because the session id is a recorded *value* and can
     be missing, whereas the pane id is the key the record is filed under
     and structurally cannot be."""
-    manual = (rec.get("session_name") or "").strip()
+    manual = manual_names.get((rec.get("session_id") or "").strip(), "")
     if manual:
         return manual
     if member and member.get("name"):
