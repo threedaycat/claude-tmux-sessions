@@ -95,11 +95,36 @@ def load_teams():
     return snap if snap["teams"] else None
 
 
+_MANUAL_NAMES = None
+
+
+def manual_names():
+    """Level 1 of the naming chain: the names people chose themselves.
+
+    Same one-stat gate and lazy import as load_teams(), and memoised for
+    the same reason — but note where it is *not* called from. `--pane`
+    prints no name, so the pane preview, which runs on every cursor stop
+    and has the tightest budget in this file, never reaches this."""
+    global _MANUAL_NAMES
+    if _MANUAL_NAMES is not None:
+        return _MANUAL_NAMES
+    _MANUAL_NAMES = {}
+    home = os.environ.get("CLAUDE_HOME") or os.path.expanduser("~/.claude")
+    if os.path.isdir(os.path.join(home, "sessions")):
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import claude_sessions
+            _MANUAL_NAMES = claude_sessions.manual_names()
+        except Exception:
+            _MANUAL_NAMES = {}
+    return _MANUAL_NAMES
+
+
 def display_name(pane, rec, window_name, pane_title, member):
     """The name for a pane, best source first — see list-rows.sh for the
     full reasoning. Kept in step with it so a pane is called the same thing
     in the list and in the preview of that same list."""
-    manual = (rec.get("session_name") or "").strip()
+    manual = manual_names().get((rec.get("session_id") or "").strip(), "")
     if manual:
         return manual
     if member and member.get("name"):

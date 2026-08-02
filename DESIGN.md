@@ -445,16 +445,72 @@ own reason:
 
 | | source | falls through when |
 |---|---|---|
-| 1 | a hand-picked session name | not recorded (always, today — the slot is reserved) |
+| 1 | a hand-picked session name (`~/.claude/sessions/`) | nobody renamed this session |
 | 2 | the team roster's `name` | the pane isn't on a team |
 | 3 | `pane_title` | empty, or really the shell's default |
 | 4 | `window_name` | empty |
 | 5 | the session id, then the pane id | never |
 
+**Level 1 is read, not recorded.** It was a reserved empty slot for three
+commits because the obvious place to fill it from does not exist: the
+status file this repo writes has no such field, and no hook payload carries
+one either — checked against the binary, not assumed. Claude Code keeps the
+name in files of its own, `~/.claude/sessions/{pid}.json`, and
+`bin/claude_sessions.py` is the one parser for them (same rule as
+`agent_teams.py`: two parsers for a format we don't own drift the first
+time it moves).
+
+Three things about those files decide how they are read, and all three are
+properties of the format rather than choices:
+
+- **Only names a person chose are accepted.** Claude Code names every
+  session, mostly by derivation from the cwd, and marks those
+  `nameSource: "derived"`. A derived name is *worse* than what levels 3-4
+  already produce — it is the directory, which the row's trailing field
+  already says — so promoting one would make the column less accurate for
+  everybody who has never renamed anything. The test is "the field is
+  absent", which is what `/rename` leaves behind, and it is deliberately
+  the strict reading: a future `nameSource: "user"` would be rejected and
+  nothing visible would change, while the loose reading would let a future
+  `nameSource: "auto"` through and quietly downgrade the column for people
+  who have nothing to do with any of this. There is a second reason to be
+  strict, and it is the same one `safe_title()` exists for: a name derived
+  from a cwd under `$HOME` can be derived from `$HOME` *itself*, and then
+  the "name" is the operator's login name. Rejecting derived names keeps
+  that out of a list people screenshot without needing a second guard.
+- **The files are keyed by pid, the picker is keyed by session.** A crashed
+  Claude leaves its file behind and a resumed session writes a second one,
+  so the lookup indexes by `sessionId` — the only key both sides hold — and
+  the larger `updatedAt` wins a collision. `status` is not used for it:
+  `idle`/`busy` says what a session was doing, never whether the process is
+  still alive.
+- **Reading is why this is on the render path and not in the hook.** The
+  hook would write the name once into the status entry and both renderers
+  would get it for free, which is tempting and wrong: the value would then
+  be as old as that pane's last status change. Renaming a session and
+  immediately opening the picker is precisely the moment the feature is
+  used, and an idle pane has no next status change to refresh it. Reading
+  costs one `listdir` plus one small parse per file, memoised per process
+  — measured at ~25µs a file, so ~12ms against a synthetic 500-file
+  directory, against a startup path that already costs ~100ms.
+
+Degradation is the same one stat as teams: no `~/.claude/sessions/`, no
+import, no read, and the chain answers at level 2 or 3 exactly as before —
+verified by diffing the row output against the previous version with
+`CLAUDE_HOME` pointed at an empty directory.
+
+> One visible consequence for anyone who *has* renamed a session: Claude
+> Code writes a spinner glyph into `pane_title` alongside the name, so
+> level 3 was returning `✳ agi-docs`, and while Claude is working the glyph
+> is an animating braille frame that changes the row between renders. Level
+> 1 returns the name alone. Sessions nobody renamed still show the glyph;
+> that is level 3 behaving as it always has.
+
 Level 3 is why this is worth doing at all: several Claude panes sharing
 one tmux window all write to the same `window_name`, so it arrives as
 their titles concatenated in an order none of them agree on, while
-`pane_title` stays per-pane and clean. Level 2 doubles as the membership
+`pane_title` stays per-pane and clean — and it still is why, because level
+1 answers only for sessions somebody bothered to name. Level 2 doubles as the membership
 test — a roster hit *is* membership, so nothing tests for it separately —
 and the lead needs no special case, because it falls through to level 3
 and its `pane_title` is the session summary, which is what its row should

@@ -245,6 +245,12 @@ Claude panes sharing one window they aren't — the window title is all of their
 titles concatenated — so those rows now show each pane's own name instead of
 the same jumble repeated.
 
+A session you renamed yourself with `/rename` is shown by that name, ahead of
+every automatic source. Only names you chose count — Claude Code also
+generates one for every session, and a generated name is just the directory,
+which the row already tells you at the other end. Nothing changes if you have
+never renamed anything.
+
 Point `CLAUDE_TMUX_TEAM_LABELS` at a JSON file (`{"member-name": "word"}`) to
 choose the word used for each member's role in the previews. The picker prints
 whatever you put there and doesn't interpret it.
