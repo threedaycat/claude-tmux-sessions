@@ -284,8 +284,11 @@ def display_name(pane, rec, window_name, pane_title, member):
          nobody renamed, which is most of them — a *generated* name is
          deliberately not accepted here.
       2. the team roster's name — the only source that says *who* a pane
-         is. Falls through when the pane isn't on a team, or is a lead
-         (whose roster entry holds a placeholder where a pane id would go).
+         is. Teammates only: a lead's row keeps falling through to level 3,
+         because its `pane_title` is the session summary and its roster name
+         is its agent type, which is the same word on every team's lead. So
+         the more informative source is the lower one, exactly the case this
+         level exists to catch in the other direction.
       3. pane_title — per-pane and clean. Falls through when empty, or when
          it's really the shell's default (see safe_title).
       4. window_name — the old source. Several Claude panes sharing one
@@ -315,7 +318,7 @@ def display_name(pane, rec, window_name, pane_title, member):
     manual = manual_names.get((rec.get("session_id") or "").strip(), "")
     if manual:
         return manual
-    if member and member.get("name"):
+    if member and member.get("is_mate") and member.get("name"):
         return member["name"]
     return (
         safe_title(pane_title)
@@ -363,6 +366,20 @@ IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 # text (narrow, monochrome) presentation of the two media glyphs so they
 # stay single-width in the aligned list and take our colour.
 now = time.time()
+
+# The lead's pane is the one thing the roster cannot name, so it is deduced
+# from the panes this list is about to show — which means the world has to
+# be handed to the team reader before any row is built. One pass over the
+# same entries the loop below walks; `live` and `archived` are filtered the
+# same way, because a pane this list would not show must not be nominated
+# as anybody's lead either.
+if teams_snap:
+    agent_teams.attach_lead(teams_snap, {
+        p: live[p][1] for p, e in data.items()
+        if p in live and not e.get("archived")
+    })
+    members_by_pane = teams_snap["by_pane"]
+
 by_session = defaultdict(list)
 # Which teams have a pane in which session. Derived from the panes rather
 # than asked of the roster, because the roster records no session: the only
@@ -455,6 +472,27 @@ if team_only_file and teams_snap:
 # it was, and moves the one part of the row that sits at a fixed x on every
 # other line — the status label — twice as far as before.
 MATE_INDENT = 4
+
+# The lead does get a word, and the teammates' word being gone is the reason
+# it can afford one. `队员` was paid once per member row, on every row of a
+# team, to say a thing three other signals already said. `中枢` is paid once
+# per team — one row — to say the thing none of them say: that this pane is
+# where the team is run from. Same five cells, two orders of magnitude less
+# of them.
+LEAD_W = 5           # 4 cells of label + the separating space
+LEAD_COLOUR = "1;36"  # bold cyan, matching the session headers
+
+
+def lead_tag(member):
+    """The tag opening an identified lead's name column, or "".
+
+    Only for a confirmed lead. The ambiguous case — several candidate panes
+    in the team's session — deliberately reaches this and gets nothing, so a
+    row is never told it is the lead on a guess (see
+    `agent_teams.attach_lead`)."""
+    if not member or not member.get("is_lead"):
+        return ""
+    return f"\033[{LEAD_COLOUR}m" + pad(clip(member.get("label") or "", 4), LEAD_W) + "\033[0m"
 
 
 def name_colour(member):
@@ -637,7 +675,13 @@ for s in sessions_sorted:
         # work on them, and they sit together under their lead. Only the
         # digit shortcut is gone, and the lead — which is a real session
         # you'd want to jump to — keeps its number.
-        is_mate = bool(member) and not member.get("is_lead")
+        #
+        # Asked of the entry rather than derived as "on a team and not the
+        # lead", because `by_pane` now holds a third kind: a pane in the
+        # team's session that could not be told apart from the lead. Deriving
+        # it would make those rows teammates — indented, unnumbered and
+        # skipped by the cursor — which is the opposite of why they were kept.
+        is_mate = bool(member) and member.get("is_mate")
         # Numbered BEFORE the visibility test, on purpose: a pane's number
         # must not change when you collapse or expand the list, or the number
         # you learned is a lie the moment you press `a`. The cost is that
@@ -659,10 +703,15 @@ for s in sessions_sorted:
         # role tag sat in front of it and was the part worth scanning for;
         # with the tag gone the name is that part, and receding is the one
         # thing it must not do.
+        #
+        # A lead's row opens with `中枢` instead, eating the front of the
+        # column the way the teammates' tag used to — one row per team can
+        # afford what one row per member could not.
         if member:
+            tag = lead_tag(member)
             on, off = name_colour(member)
-            width = NAME_W - (MATE_INDENT if is_mate else 0)
-            name_cell = on + col(wname, width) + off
+            width = NAME_W - (LEAD_W if tag else 0) - (MATE_INDENT if is_mate else 0)
+            name_cell = tag + on + col(wname, width) + off
             trailing = member_tail(member, counts_of.get(member["team"], {}))
         else:
             name_cell = col(wname, NAME_W)

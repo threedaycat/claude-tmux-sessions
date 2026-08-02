@@ -597,6 +597,60 @@ which after the fold is the only surface left that can — so that half of
 the preview is not optional decoration, it carries the one thing the row
 list structurally cannot show.
 
+### Finding the lead's pane, which the roster refuses to name
+
+**No field in the official data says which pane a lead is sitting in.**
+`tmuxPaneId` on a lead's roster entry is the literal string `"leader"`, and
+`leadSessionId` is a session id that is not refreshed when the lead moves,
+so it goes stale while still looking authoritative. Believing either would
+match nothing at best and something unrelated at worst — `members()` keeps
+only `%`-prefixed values for exactly that reason.
+
+That left the lead's pane looking, to every consumer of `by_pane`, like a
+pane on no team at all — and `f`, which filters to "panes that are on a
+team", **dropped the lead's row entirely**. The team's own row. It was
+never a filter bug: the filter's question was right and the data answered
+it wrongly, so the fix is in the join, not in the filter.
+
+The lead is found **by elimination**, using the one structural fact
+available: a team is spawned by splitting the window its lead is already
+in. So the team's session is wherever its teammates turned up, and the lead
+is the tracked Claude pane in that session that is not one of them.
+`agent_teams.attach_lead()` does it, and it takes the caller's world —
+`{pane: session}` — rather than reading tmux itself, so the module stays a
+pure reader of `~/.claude/teams` and both renderers get the same answer.
+
+| candidates | what happens |
+|---|---|
+| exactly one | that is the lead: `is_lead`, the `中枢` tag, and the roster entry gets its pane so the preview stops saying it has none |
+| more than one | **nothing is marked as the lead.** All candidates still join `by_pane`, as neither lead nor teammate, so `f` cannot drop the real one |
+| none | the lead isn't tracked; nothing to do |
+
+The middle row is the whole design. An unrelated Claude pane sharing the
+session makes the deduction ambiguous, and the two errors are not
+symmetrical: a missing tag costs a word, while naming the wrong pane as the
+lead is a lie that reads as fact. Keeping every candidate guarantees the
+lead survives `f` without anyone having to be right about which it is.
+
+> Those extra entries are a **third kind** of thing in `by_pane`, and that
+> is why `is_mate` is a stated field rather than `not is_lead`. Derived, a
+> candidate would have come out as a teammate — indented, unnumbered,
+> skipped by the cursor — which is the exact opposite of why it was kept.
+> Three places ask the question and all three now ask the entry: the row's
+> shape, the naming chain's level 2, and whether the session preview gives
+> the pane a card.
+
+A lead keeps its own `pane_title` as its name rather than taking the roster
+name, in both renderers. Its roster name is its agent type, which is the
+same word on every team's lead, while its pane title is the session
+summary. Level 2 of the naming chain is therefore teammates-only.
+
+**`中枢` is a word on a row, which `队员` was not allowed to be.** The
+difference is arithmetic: `队员` was paid once per member on every row of a
+team, to repeat what three other signals already said; `中枢` is paid once
+per team, on one row, to say the thing none of them say. Removing the first
+is what afforded the second.
+
 Teammate rows are shown but not selected. They carry no gutter number
 (field 4 is empty, which is what the digit shortcut resolves against) and
 field 5 marks them `mate`, which takes them out of the set the cursor
@@ -638,6 +692,15 @@ the only way to put the cursor on a teammate. Without it the marker above
 would make them permanently unreachable except through `/` search, so the
 key that looked redundant once teams stopped having their own block is in
 fact the escape hatch for the row kind that stopped being selectable.
+
+While the lead's pane was unidentifiable, `f` showed a list in which **no
+row had a number** — teammates decline them by design, and the only row
+that would have carried one was the lead's, which the filter was dropping.
+The header went on advertising 数字直跳 to a screen where every digit
+resolved to nothing. Identifying the lead fixes that as a side effect
+rather than as a second change: the lead's row comes back, and it brings
+its number with it. The number is the same one it has with the filter off,
+because rows are numbered before filtering.
 
 **`f` may never produce an empty list**, and "is there a team" is the wrong
 question to decide that on. A team directory outlives the teammates in it,
@@ -758,11 +821,12 @@ it has claimed and its unread count when it has either.
 
 A pane that is *not* a member but whose session hosts a team gets one line:
 the same counts the session header carries (`编队 <team> · 队员 3 · 在做 1 ·
-待领 2`). That is the lead's pane, or a pane sitting beside it — **which one
-is the lead cannot be known**, because a lead's roster entry holds the literal
-string `leader` where a pane id belongs, so the honest test is the session
-rather than the pane, and the same summary on a sibling pane is at worst
-harmless.
+待领 2`). Once the lead is identified it takes the member line above instead,
+naming itself; this summary is what remains for the panes beside it, and for
+the case where the lead could not be picked out of several candidates (see
+"Finding the lead's pane"). Keying it on the session rather than the pane is
+what makes it right in both, and the same summary on a sibling pane is at
+worst harmless.
 
 The roster is deliberately *not* repeated here. The session header's preview
 already carries it in full, and rebuilding it against a live screen would be

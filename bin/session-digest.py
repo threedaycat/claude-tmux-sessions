@@ -76,13 +76,20 @@ def safe_title(title):
     return t
 
 
-def load_teams():
+def load_teams(data=None):
     """Agent Teams state, or None when there is none.
 
     Same one-stat gate as list-rows.sh, and for the same reason: a preview
     runs on every cursor stop, so the cost of this feature for someone who
     never turned Agent Teams on has to be a stat and nothing else — no
-    import, no extra process."""
+    import, no extra process.
+
+    `data` is the status file, when the caller has it. It is what lets the
+    lead's pane be identified — the roster cannot name it, so it has to be
+    deduced from the panes actually being tracked (see
+    `agent_teams.attach_lead`). Passing it is how this preview and the row
+    list end up agreeing about which pane is the lead; a caller that omits
+    it gets the roster's own answer, which is that the lead has no pane."""
     home = os.environ.get("CLAUDE_HOME") or os.path.expanduser("~/.claude")
     if not os.path.isdir(os.path.join(home, "teams")):
         return None
@@ -90,6 +97,15 @@ def load_teams():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import agent_teams
         snap = agent_teams.snapshot()
+        if snap["teams"] and data:
+            # The session recorded by the hooks, not tmux's current answer:
+            # one fewer subprocess on a path that runs at every cursor stop,
+            # and it only differs for a pane moved between sessions since its
+            # last status update.
+            agent_teams.attach_lead(snap, {
+                p: e.get("session") or "" for p, e in data.items()
+                if not e.get("archived") and e.get("session")
+            })
     except Exception:
         return None
     return snap if snap["teams"] else None
@@ -127,7 +143,10 @@ def display_name(pane, rec, window_name, pane_title, member):
     manual = manual_names().get((rec.get("session_id") or "").strip(), "")
     if manual:
         return manual
-    if member and member.get("name"):
+    # Teammates only — a lead falls through to its pane title, same as in
+    # list-rows.sh. Kept in step deliberately: the lead is now identifiable,
+    # so this is the first time the two could have disagreed about it.
+    if member and member.get("is_mate") and member.get("name"):
         return member["name"]
     return (
         safe_title(pane_title)
@@ -413,11 +432,15 @@ def pane_team_lines(pane, data, width, limit=4):
         deliberately *not* repeated here: the session header's preview
         already carries it in full, and rebuilding it against a live screen
         would be the duplication that folding the team block removed."""
-    teams_snap = load_teams()
+    teams_snap = load_teams(data)
     if not teams_snap:
         return
     m = teams_snap["by_pane"].get(pane)
-    if m:
+    # A pane that is in `by_pane` without being anybody in particular — one
+    # of several candidates for a team's lead — has no name and no label to
+    # print, so it takes the session summary below instead of a member line
+    # made of blanks.
+    if m and (m.get("is_mate") or m.get("is_lead")):
         lines = []
         head = f"编队 {m['team']} · {m['label']} {m['name']}"
         if m.get("type"):
@@ -475,19 +498,22 @@ def team_board(team):
     somewhere that isn't a jump target is the honest version — and once
     the standalone team block was folded into the session header, this
     became the only place left that can."""
-    teams_snap = load_teams()
+    # Read before the roster, not after: the status file is what lets the
+    # lead's pane be identified, so loading it second would print a roster
+    # that still believes the lead has no pane.
+    try:
+        with open(STATUS_FILE) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+
+    teams_snap = load_teams(data)
     if not teams_snap:
         return
     t = next((x for x in teams_snap["teams"] if x["team"] == team), None)
     if not t:
         return
     width = max(30, int(os.environ.get("FZF_PREVIEW_COLUMNS", 80)) - 2)
-
-    try:
-        with open(STATUS_FILE) as f:
-            data = json.load(f)
-    except Exception:
-        data = {}
 
     print(BOLD + CYAN + clip(f"编队 {t['team']}", width) + RESET)
     now = time.time()
@@ -628,7 +654,7 @@ def main():
         if len(parts) == 4 and parts[1] == session:
             win_of[parts[0]] = (parts[2], parts[3])
 
-    teams_snap = load_teams()
+    teams_snap = load_teams(data)
     by_pane = teams_snap["by_pane"] if teams_snap else {}
 
     now = time.time()
@@ -641,7 +667,13 @@ def main():
         # full card would repeat all of that at five times the height — the
         # duplication this preview was split in two to remove. Its live
         # screen is still one keypress away: `f`, then the pane row.
-        if pane in by_pane:
+        #
+        # Teammates only, so the lead keeps its card. Now that the lead's
+        # pane can be identified it is *in* `by_pane`, and testing membership
+        # alone would have silently deleted the one card in this half worth
+        # the most — the roster gives the lead a line, but the line has no
+        # task and no recap.
+        if by_pane.get(pane, {}).get("is_mate"):
             continue
         label, rank = label_of(e)
         cards.append((rank, -e.get("updated_at", 0), pane, label, e))
@@ -684,7 +716,9 @@ def main():
         wname, ptitle = win_of[pane]
         member = by_pane.get(pane)
         name = display_name(pane, e, wname, ptitle, member)
-        role = f"{CYAN}{member['label']}{RESET} " if member else ""
+        # An unidentified lead candidate has no label; printing the empty
+        # string here would still cost the card title a leading space.
+        role = f"{CYAN}{member['label']}{RESET} " if member and member.get("label") else ""
         title = (f"{label}  {role}{BOLD}{clip(name, width - 18)}{RESET}"
                  f"  {DIM}{fmt_age(_rank, age)}{RESET}")
         print(title)
