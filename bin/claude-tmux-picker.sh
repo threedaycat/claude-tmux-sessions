@@ -154,6 +154,11 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   # type a t. token-page.sh returns immediately in that state (it reads
   # $FZF_INPUT_STATE, which fzf exports to every child).
   --bind "t:transform($BIN_DIR/skip-header.sh \"{n}\" tokens t)+execute($BIN_DIR/token-page.sh 1)"
+  # Enter is routed through the transform for one reason: on an empty list
+  # fzf's own `accept` closes the picker with nothing selected, which reads
+  # as "it did something" while nothing was jumped to. The transform answers
+  # `accept` in every other case, so this changes nothing you can see.
+  --bind "enter:transform:$BIN_DIR/skip-header.sh \"{n}\" enter"
   --bind "q:transform:$BIN_DIR/skip-header.sh \"{n}\" quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh \"{n}\" esc"
   --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh \"{n}\" archive"

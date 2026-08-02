@@ -335,6 +335,101 @@ search is switched off.
 > shown has to answer "and what if that is zero". The list going empty is
 > reachable, it is not an error, and it must stay escapable.
 
+### Empty, and nowhere to stand
+
+Escapable is not the same as honest. Once the keyboard worked again, the
+picker still sat in these states saying nothing, under a header advertising
+eleven keys of which three did anything — while the one key that always
+worked, `esc`, was the one never named. And `Enter` **closed the picker and
+jumped nowhere**, which is worse than a dead key: it did something nobody
+asked for.
+
+**There are five of these and they are not one thing.** Measured, each with
+its own recipe:
+
+| | state | rows underneath | recovers by |
+|---|---|---|---|
+| ① | genuinely empty — everything archived or exited | none | nothing; legitimate and permanent |
+| ② | `f` filtered everything away | yes | itself — the rebuild drops the filter |
+| ③ | `/` matched nothing | yes | Backspace, or `Esc` |
+| ④ | **pane mode with no pane to stop on** | yes — a header and a `⋯ 收起` line | `a` |
+| ⑤ | session mode with no header to stop on | yes — all provider rows | `l` |
+
+④ is the one that matters, because it needs no teams, no filter and no
+search: **two tracked panes in one tmux session, both read, is enough.**
+Collapsing fires at two, the pane rows fold into a `⋯ 收起 N 个` line, and
+what is left is a header the cursor cannot stop on in pane mode plus a label
+that is not a destination in either. The list is not empty. There is simply
+nowhere to go, and every key that moves said nothing about it.
+
+**So the test is "how many stops does *this mode* have", not "how many rows
+are there".** Those are different questions and ④ and ⑤ live in the gap
+between them. ①④⑤ are all derived from that one count, in `stops_here()`;
+②③ keep the mechanisms they already had, which were already right, and
+**must not be folded in** — the likeliest way to damage this area is to
+"unify" four working behaviours into one.
+
+> **An event is not a state, and they cannot share a mechanism.** `f`
+> dropping its filter is an event: it happened once, a one-shot notice is
+> correct, and the next cursor move clearing it is correct too. Emptiness is
+> a state: it persists, so it has to be *recomputed* on every header, not
+> latched. The proof that latching fails is that **`j` still fires when
+> there is nothing to move to** — it re-sends the mode's header, so a
+> one-shot empty notice is wiped by the first keypress after it, while the
+> state that produced it has not changed. When both apply at once the state
+> wins: the way out outranks the explanation, and the explanation would be
+> erased a keypress later anyway.
+
+**The header for these states is assembled from the keys that are live**,
+not written as a sentence. `a` appears only when something is actually
+collapsed; `h`/`l` only when the other mode has stops. Digits, `ctrl-x`,
+`j`/`k` and `Enter` are inert here, so none of them is named.
+
+Three constraints on the copy, each paid for by something measured:
+
+- **The way out comes first.** In a half-width list the header is truncated
+  well before its end, and `q 退出` was landing past the cut — the only exit
+  named was routinely off-screen. What survives truncation must be the part
+  you cannot do without, so the string opens `q/esc 退出` and the
+  explanation is what gets lost.
+- **No parentheses**, anywhere in it. fzf parses `change-header(…)` by
+  matching them and one here truncates the header at that point.
+- **No team vocabulary.** ① and ④ are *more* likely for someone who has
+  never enabled Agent Teams — one Claude that exits, or two that have both
+  been read — so a word about teams here would be both wrong and a breach
+  of the "costs nothing if you don't use it" invariant.
+
+For ① the wording is the startup guard's, verbatim minus its full stop.
+Reaching the same condition by a different route should not be described in
+different words — and until now one route printed a sentence and the other
+printed nothing at all.
+
+**`Enter` does nothing when there are no rows.** It is routed through the
+transform for that one case and answers `accept` in every other, so nothing
+else changes. Doing nothing is not much, but closing the window is what `q`
+and `esc` are for.
+
+**A sixth case belongs to this family without being empty at all:** `f`,
+with a team whose only member is the lead, on a machine with an external
+provider configured. The lead's pane can only be deduced from where its
+teammates are, so a team with none is unfindable and contributes no rows —
+and provider rows are emitted regardless of the filter. The list is then
+neither empty nor stop-less; it is a screenful of somebody's to-do items
+under a key labelled 编队. That is the same lie told the other way round, so
+`f` refuses to stay on: under the filter, a pane row *is* a team row by
+construction, so "did the filter find anything" is exactly "is there a pane
+row", and finding none drops the filter and says so — the recovery ② already
+had.
+
+> **Do not turn the position sets into arrays.** `HEADER_POS`, `PANE_POS`
+> and `EXTRA_POS` are comma-separated strings, and under `set -u` on bash
+> 3.2 — which is what `/bin/bash` is on macOS — expanding an empty array is
+> a fatal error rather than an empty result. A transform that exits prints
+> nothing, and a key that prints nothing is a key that does nothing: exactly
+> the failure the section above exists to prevent, reintroduced by a
+> refactor that looks like tidying. An empty string is just an empty string,
+> and "this set is empty" is a daily occurrence here, not an edge case.
+
 ## External item provider
 
 The picker only knows about tmux panes. Some people want more in the same
