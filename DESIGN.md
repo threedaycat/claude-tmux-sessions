@@ -685,12 +685,57 @@ one column whose whole value is that you can act on it.
 
 Moving the selection instantly re-runs `tmux capture-pane -S -200` on the
 highlighted pane in the right-hand preview, scrolled to the bottom (`follow`) so
-you see the most recent output. It's topped by a Claude-Code-statusline-style
+you see the most recent output. Under it sits a Claude-Code-statusline-style
 bar (`session-digest.py --pane`): status · model · a `▓░` context meter (% of
 the context window, see below — with a red `⚠ /compact` when the remaining
 headroom gets thin) ·
 the status-aware elapsed time · cwd, read via a cheap 80KB transcript tail so it
 costs ~40ms per cursor stop.
+
+### Why the bar is under the screen and not over it
+
+For three commits it was printed first, and for three commits **nobody could
+see it**. `follow` pins the preview to the bottom of whatever the script
+prints, and a 200-line scrollback is several times the height of the window,
+so everything printed before the capture was scrolled off — measured, with
+fzf's own indicator reading `239/277`.
+
+The three alternatives are all worse:
+
+| fix | why not |
+|---|---|
+| drop `follow` | shows the top of a 200-line scrollback and hides the live screen, which is the entire point of a pane preview |
+| trim the capture to the window height | `wrap` means one captured line can occupy several display rows, so "print exactly `$FZF_PREVIEW_LINES` lines" is not computable from the line count |
+| `follow` off for team rows only | `--preview-window` is one global setting; there is no per-row form of it |
+
+Printing last needs none of that and cannot be defeated by content length:
+when the output overflows, `follow` puts the end of it on screen, and when it
+doesn't, there is nothing to scroll. It also puts the bar where Claude Code
+puts its own statusline, so the preview reads the way the pane does.
+
+One detail that is not cosmetic: the bar opens with an explicit `\033[0m`.
+The screen above it arrives through `capture-pane -e` and can end
+mid-attribute, and an unterminated colour there would otherwise bleed into
+every line below it.
+
+### What the bar says about a team
+
+A pane on a team names its team, its member and its agent type, plus the task
+it has claimed and its unread count when it has either.
+
+A pane that is *not* a member but whose session hosts a team gets one line:
+the same counts the session header carries (`编队 <team> · 队员 3 · 在做 1 ·
+待领 2`). That is the lead's pane, or a pane sitting beside it — **which one
+is the lead cannot be known**, because a lead's roster entry holds the literal
+string `leader` where a pane id belongs, so the honest test is the session
+rather than the pane, and the same summary on a sibling pane is at worst
+harmless.
+
+The roster is deliberately *not* repeated here. The session header's preview
+already carries it in full, and rebuilding it against a live screen would be
+the duplication that folding the team block away removed. Which team is in
+which session is derived from the panes, exactly as `list-rows.sh` derives it,
+so the preview can never claim a team the header above it doesn't show.
 
 In session mode the preview instead shows one compact card per tracked pane,
 built by `bin/session-digest.py` from each pane's Claude Code transcript

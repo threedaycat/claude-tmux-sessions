@@ -32,11 +32,28 @@ if [ "$kind" = "extra" ]; then
 fi
 
 if [ -n "$pane" ]; then
-  # Claude-Code-statusline-style bar on top (status · model · ctx ·
-  # elapsed · cwd) — the raw screen dump alone doesn't tell you the
-  # things you actually triage by.
-  python3 "$BIN_DIR/session-digest.py" --pane "$pane" 2>/dev/null || true
+  # Claude-Code-statusline-style bar (status · model · ctx · elapsed · cwd,
+  # plus the team it belongs to) — the raw screen dump alone doesn't tell
+  # you the things you actually triage by.
+  #
+  # **It goes last, under the screen, and that is not a style choice.** The
+  # preview window is opened with `follow`, so fzf pins it to the bottom of
+  # whatever this script prints; a 200-line scrollback is far taller than
+  # the window, so anything printed first is scrolled off before you see
+  # it. The bar spent three commits at the top being invisible — measured,
+  # with fzf's own scroll indicator reading 239/277.
+  #
+  # The alternatives were worse. Dropping `follow` shows the top and hides
+  # the *live* screen, which is what a pane preview is for. Trimming the
+  # capture to exactly fill the window can't be done reliably, because
+  # `wrap` means one captured line may occupy several display rows. And
+  # `--preview-window` is one global setting, so "no follow for team rows"
+  # is not expressible per row.
+  #
+  # Anchoring to the bottom also happens to be where Claude Code puts its
+  # own statusline, so the preview now reads the same way the pane does.
   tmux capture-pane -p -e -S -200 -t "$pane" 2>&1 || echo "(pane 已关闭或无法读取)"
+  python3 "$BIN_DIR/session-digest.py" --pane "$pane" 2>/dev/null || true
   exit 0
 fi
 
