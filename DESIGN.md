@@ -164,7 +164,7 @@ usually qualifies — and not finding yourself in the list is disorienting).
 and dim `✔` counts in the header. Those counts *are* the collapsed panes, which
 was tempting — but implied is not the same as readable, and the question you
 actually have is "is pressing `a` worth it", which deserves an answer in words.
-A session whose panes all collapse keeps its header, so a 24-pane fleet reads
+A session whose panes all collapse keeps its header, so a 24-pane spread reads
 as a handful of session lines plus the few rows that want you.
 
 That line also sets the threshold: **a session with only one collapsible pane
@@ -263,6 +263,77 @@ variable. The row cache matters: re-running `list-rows.sh` on every keypress
 (prune + two pythons + tmux round-trips) made held-down cursor movement lag by
 seconds under load, so the rows are written once at startup and refreshed only
 on the `ctrl-x` reload.
+
+### The empty list, and `{n}`
+
+**Every key above is a `transform` that receives the cursor's index as
+`{n}` — and when the list is empty there is no item under the cursor, so
+fzf does not substitute `{n}`. It drops it.** The argument list arrives one
+short and everything shifts left: the *direction* lands in the slot the
+script reads a number from.
+
+The result was that an empty list bricked the picker. `Esc` parsed as a
+down-arrow. `q` reached `orig=$(( cur + 1 ))` with `cur` holding the word
+`quit`, tripped `set -u`, and exited non-zero having printed no action —
+and a `transform` that prints nothing is a key that does nothing. Every
+key routed through `skip-header.sh` was dead at once; only `ctrl-c` was
+left.
+
+**This is not an Agent Teams bug and it is older than that feature.** There
+are three routes to an empty list and only one of them involves `f`:
+
+| | route | needs a team? |
+|---|---|---|
+| a | `ctrl-x` the last tracked pane | no — reproduces on `38c2c0a` |
+| b | `/` search matching nothing | no |
+| c | the last Claude exits while the picker sits open, then `a` rebuilds | no |
+| d | `f`, when no member of any team currently holds a live pane | yes |
+
+(b) is the mild one: Backspace is not bound to a transform, so deleting
+back to a match recovers on its own. (c) is the one that disproves the
+tempting shortcut "only `f` can empty the list, so only `f` needs the
+check" — every rebuild re-reads the world, and the world shrinks whether
+or not a key asked it to.
+
+Three fixes, at three layers, because they answer three different
+questions:
+
+- **The picker quotes `{n}` in every bind** — `"{n}"` instead of `{n}`.
+  This is the fix at the source: quoted, an empty index survives as an
+  empty first argument and nothing shifts. Verified directly against fzf:
+  on an empty list `probe {n} x` arrives as `argc=1 [x]` while
+  `probe "{n}" x` arrives as `argc=2 [] [x]`. The `load` bind passes a
+  literal `0` rather than `{n}`, so it never had the problem and is left
+  alone — which is also why `init` was the one transform that kept working.
+- **`skip-header.sh` normalises the arguments anyway.** Defence in depth,
+  and deliberately kept after the quoting: it accepts all three shapes —
+  a real number, a present-but-empty first argument, and a missing one —
+  and lands on the same place. An empty list is a *normal* state, not
+  malformed input, so it must never reach the arithmetic. `set -u` stays:
+  it is the net that caught this, not the cause of it.
+
+  > The subtle way to get this wrong is to zero `cur` without moving the
+  > arguments back. `Esc` then parses as `cur=0, dir=down` and emits
+  > `pos(…)`: the crash is gone, the log is clean, and the key still does
+  > not exit. The test is not "does it stop erroring" but **"does `Esc` on
+  > an empty list emit `abort`"**.
+- **`rebuild_rows()` avoids entering an empty list when it doesn't have to.**
+  Recovering the keyboard is not the same as having somewhere to put the
+  cursor. Only route (d) is recoverable — drop the filter, rebuild without
+  it. Routes (a) and (c) are legitimately empty and stay that way.
+
+Leaving a no-match search is a third face of the same thing, and why the
+`Esc` action reads `clear-query+search()+disable-search+…`. `clear-query`
+empties the query, but the re-filter it schedules is discarded by the
+`disable-search` arriving in the same batch, so `Esc` used to leave the
+list still narrowed to whatever the query had matched — and showing
+nothing at all when it had matched nothing. The explicit `search()` re-runs
+the search against the now-empty query and forces the full list back before
+search is switched off.
+
+> **The rule this leaves behind:** a key that can change how many rows are
+> shown has to answer "and what if that is zero". The list going empty is
+> reachable, it is not an error, and it must stay escapable.
 
 ## External item provider
 
@@ -460,6 +531,32 @@ would make them permanently unreachable except through `/` search, so the
 key that looked redundant once teams stopped having their own block is in
 fact the escape hatch for the row kind that stopped being selectable.
 
+**`f` may never produce an empty list**, and "is there a team" is the wrong
+question to decide that on. A team directory outlives the teammates in it,
+the lead's roster entry joins to no pane, and a teammate does not reach the
+status file — which is what the row list is built from — until it has been
+through a full turn. So "a team exists" and "`f` has a row to show" come
+apart routinely, and the common case is worse than the rare one: right
+after a team is spawned, every one of its rows is still missing.
+
+Turning the filter on there left fzf with nothing in it, and an empty list
+is not a view but a dead end — no row to hold the cursor, none for Enter,
+and, because fzf stops substituting `{n}` into a bind's arguments when
+there is no current item, no working `Esc` either (see below). The picker
+could only be left by killing the pane.
+
+The emptiness is therefore caught on the rebuilt rows rather than
+predicted: `rebuild_rows()` in `skip-header.sh` is the single point every
+list-changing key passes through, and if a rebuild comes back empty with
+the filter on it drops the filter, rebuilds, and says so in the header. It
+is checked on every rebuild and not just under `f` because the emptiness
+need not arrive on the keypress that causes it — turn `f` on while a team
+has a live pane, let that teammate exit, and it is the next `a` or `ctrl-x`
+that rebuilds the list into nothing.
+
+See ["The empty list, and `{n}`"](#the-empty-list-and-n) for why an empty
+list is a state worth this much trouble to avoid.
+
 **`$CLAUDE_TMUX_TEAM_LABELS`** names a JSON file mapping member name to the
 word shown in its role tag. The official data distinguishes exactly one
 role, the lead; every finer distinction is an editorial claim about one
@@ -520,7 +617,7 @@ out. A quiet `5h ░░░░░░░░░░ ?` placeholder shows only when t
 ## The token page (`t`)
 
 The footer answers "how much quota is left". The token page answers the next
-question — **where did it go** — over the whole fleet rather than one pane:
+question — **where did it go** — across every tracked pane rather than one:
 `bin/token-report.py` builds it, `bin/token-page.sh` owns the screen, `t` opens
 it, `q` leaves.
 
