@@ -108,7 +108,8 @@ def members(team):
       1. **The lead's `tmuxPaneId` is the literal string `"leader"`**, not a
          pane. Only `%`-prefixed values are treated as panes; the rest
          become empty, which correctly reports the lead as unlinked rather
-         than matching some unrelated pane.
+         than matching some unrelated pane. Which pane it really is can only
+         be worked out from outside this file — see `attach_lead()`.
       2. **The roster's own `leadSessionId` is not read at all.** A team
          directory outlives the session that made it, and that field is not
          refreshed when the lead moves to a new one — it goes stale while
@@ -126,6 +127,10 @@ def members(team):
             "name": (m.get("name") or "").strip(),
             "type": kind,
             "is_lead": kind == LEAD_TYPE,
+            # Stated rather than derived from `not is_lead`, because a third
+            # kind of entry exists that is neither (see attach_lead), and a
+            # renderer asking "is this row a teammate" must get "no" for it.
+            "is_mate": kind != LEAD_TYPE,
             "pane": pane if pane.startswith("%") else "",
             "cwd": (m.get("cwd") or "").strip(),
             "colour": (m.get("color") or "").strip().lower(),
@@ -308,9 +313,11 @@ def snapshot():
     team member, or it doesn't, and is an ordinary Claude pane.
 
     A member with no pane is still in `teams` but absent from `by_pane`.
-    That is the normal state for the lead, and the temporary state for any
-    teammate that has not yet reported in, so it is a fact to display
-    rather than an error to handle."""
+    That is the state of every lead as far as *this* function can tell —
+    the roster does not record a lead's pane — and the temporary state of
+    any teammate that has not yet reported in, so it is a fact to display
+    rather than an error to handle. `attach_lead()` fills in the first of
+    those two, given a caller willing to supply the world."""
     overrides = label_overrides()
     out, by_pane = [], {}
     for team in team_names():
@@ -343,6 +350,87 @@ def snapshot():
             "unlinked": [m["name"] for m in ms if not m["pane"]],
         })
     return {"teams": out, "by_pane": by_pane}
+
+
+def attach_lead(snap, pane_session):
+    """Find each team's lead pane, which the roster cannot name, and join it.
+
+    `pane_session` is `{pane_id: tmux session name}` for the Claude panes the
+    caller is actually showing — its world, injected, so this module keeps
+    knowing nothing about tmux or the status file. Call it after `snapshot()`;
+    it edits `snap` in place and returns it.
+
+    **Why the roster can't answer.** A lead's `tmuxPaneId` is the literal
+    string `"leader"`, so it joins to no pane, and `leadSessionId` is a
+    session id that goes stale without being refreshed — neither is a pane.
+    There is no field anywhere in the official data that names the pane a
+    lead is sitting in. Believing `tmuxPaneId` would be worse than admitting
+    that: it would match nothing at best, and something unrelated at worst.
+
+    **So the lead is found by elimination, not by lookup**, using the fact
+    that a team is spawned by splitting the window its lead is already in: a
+    team's session is wherever its teammates turned up, and the lead is the
+    tracked Claude pane in that session that is not one of them. That is a
+    deduction about the world, which is why it needs the caller's world and
+    cannot live in `snapshot()`.
+
+    Three outcomes, and the middle one is the point:
+
+      - **exactly one candidate** — it is the lead. It joins `by_pane` with
+        `is_lead` set, and the roster entry gets its pane, so the preview can
+        stop saying the lead has none.
+      - **more than one candidate** — an unrelated Claude pane is sharing the
+        session and there is no way to tell which is which. **Nothing is
+        marked as the lead.** All of them still join `by_pane`, flagged as
+        neither lead nor teammate, because the thing that must not happen is
+        `f` dropping the lead — and the only way to guarantee that without
+        knowing which one it is, is to keep them all. A missing label costs a
+        word; naming the wrong pane as the lead is a lie that reads as fact.
+      - **no candidates** — the lead isn't among the tracked panes. Nothing
+        to do, and the existing behaviour was already right.
+
+    A team whose teammates have no tracked panes yet has no known session, so
+    it reaches none of these. That matches the row list, which cannot place
+    such a team on a session header either.
+    """
+    if not snap or not pane_session:
+        return snap
+    by_pane = snap["by_pane"]
+    for t in snap["teams"]:
+        lead = next((m for m in t["members"] if m["is_lead"]), None)
+        # Nothing to deduce unless there is a lead and it is still unplaced.
+        # Both guards matter: a roster with no lead entry has no lead to find,
+        # and one whose `tmuxPaneId` was a real pane has already answered.
+        # Skipping here is what stops the fallback below from sweeping in
+        # unrelated Claude panes to protect a lead that is not missing.
+        if lead is None or lead["pane"]:
+            continue
+        mate_panes = {m["pane"] for m in t["members"] if m["pane"] and m["is_mate"]}
+        sessions = {pane_session[p] for p in mate_panes if p in pane_session}
+        if not sessions:
+            continue
+        candidates = sorted(
+            p for p, s in pane_session.items()
+            if s in sessions and p not in by_pane
+        )
+        if not candidates:
+            continue
+        if len(candidates) == 1:
+            lead["pane"] = candidates[0]
+            by_pane[candidates[0]] = lead
+            continue
+        for p in candidates:
+            # Neither a teammate nor a confirmed lead: it exists only so the
+            # team filter keeps the row. It deliberately carries no name, so
+            # the name column falls through to the pane's own title instead
+            # of being told it is somebody it might not be.
+            by_pane[p] = {
+                "name": "", "type": "", "is_lead": False, "is_mate": False,
+                "pane": p, "cwd": "", "colour": "", "sgr": "",
+                "team": t["team"], "inbox": 0, "label": "",
+                "doing": "", "doing_id": "",
+            }
+    return snap
 
 
 if __name__ == "__main__":                       # a quick look from a shell
