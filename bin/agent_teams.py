@@ -217,6 +217,15 @@ def open_task_ids(ts):
     them after a task that has been deleted costs more than a missed
     blocker would.
 
+    **The price, knowingly paid:** an invisible blocker has two causes, and
+    on disk they are identical — a task that finished and was deleted, and
+    a `blockedBy` pointing at an id that never existed. There is no
+    tombstone to tell them apart, so treating the invisible case as
+    finished means **a dangling reference is never reported again**. That
+    is the right trade because the first case happens every time a task
+    completes and the second means a malformed task list, but it does mean
+    this cannot be "fixed" back without resurrecting the false positive.
+
     One function rather than the same set comprehension in each caller,
     because this exact question is asked from three places — the counts,
     a member's current task, and the shared task list in the preview — and
