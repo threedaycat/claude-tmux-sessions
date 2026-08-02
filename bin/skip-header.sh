@@ -102,8 +102,156 @@ if [ -n "${MODE_FILE:-}" ] && [ -s "$MODE_FILE" ]; then
   mode="$(cat "$MODE_FILE")"
 fi
 
-mode_header() {
+# ---------------------------------------------------------------------------
+# The rows, and where the cursor may stop in them.
+#
+# Loaded on demand and once: the header now depends on how many stops there
+# are, and the header is emitted from several places, some of which run
+# before this file used to look at the rows at all.
+#
+# The three position sets stay **comma-separated strings, not arrays**, and
+# that is load-bearing rather than legacy. Under `set -u` bash 3.2 — which is
+# what `/bin/bash` is on macOS — expanding an empty array is a fatal error,
+# not an empty result, so `${EMPTY[@]}` would exit the script. A transform
+# that exits prints nothing, and a key that prints nothing is a key that does
+# nothing: the exact failure this file exists to prevent. An empty *string*
+# is just an empty string. Do not "modernise" these into arrays.
+ROWS=""
+TOTAL=0
+HEADER_POS=""
+PANE_POS=""
+EXTRA_POS=""
+_rows_loaded=0
+
+load_rows() {
+  [ "$_rows_loaded" = 1 ] && return 0
+  if [ -n "${ROWS_FILE:-}" ] && [ -s "$ROWS_FILE" ]; then
+    ROWS="$(cat "$ROWS_FILE")"
+  else
+    ROWS="$("$BIN_DIR/list-rows.sh")"
+  fi
+  if [ -z "$ROWS" ]; then
+    # Short-circuited, and not as an optimisation. `printf '%s\n' ""` emits
+    # one empty line, and an empty line satisfies the session-header test —
+    # empty pane id, empty row number, empty kind — so feeding it to the
+    # scanners below invents a header at row 1 on a list that has no rows at
+    # all. That was harmless while nothing counted the sets; it stops being
+    # harmless the moment "how many stops are there" decides what the header
+    # says, and it would have offered `h 看 session` on an empty picker.
+    TOTAL=0
+    HEADER_POS=",,"
+    PANE_POS=",,"
+    EXTRA_POS=",,"
+    _rows_loaded=1
+    return 0
+  fi
+  TOTAL=$(printf '%s\n' "$ROWS" | wc -l | tr -d ' ')
+  # Four row kinds, and the cursor treats them differently: session headers
+  # (empty pane id, empty row number, no kind) stop only in session mode,
+  # pane rows (a %pane id) stop only in pane mode, the "⋯ 收起 N 个" summary
+  # (empty pane id, row number "-") stops in neither — it's a label, not a
+  # destination — and external provider items (field 5 == "extra") stop in
+  # pane mode alongside the panes, since Enter acts on them too. Hence
+  # separate position sets rather than one negated set.
+  HEADER_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($2 == "" && $4 == "" && $5 == "") print NR }' | paste -sd, -),"
+  # Teammate rows (field 5 == "mate") are excluded: they carry a pane id, so
+  # the bare `$2 != ""` test used to take them, and the cursor stopped on
+  # every teammate on its way past a team — walking you through rows that
+  # repeat what their lead's row already says, to reach a lead you'd wanted
+  # in one step. They stay visible, and a search hit can still act on one;
+  # they are simply not somewhere j/k stops. Under `f` list-rows.sh omits
+  # the marker, so in that mode they are ordinary pane rows again — which is
+  # the whole point of that mode.
+  PANE_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($2 != "" && $5 != "mate") print NR }' | paste -sd, -),"
+  EXTRA_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($5 == "extra") print NR }' | paste -sd, -),"
+  _rows_loaded=1
+}
+
+# The row cache changed underneath us; the next question re-reads it.
+invalidate_rows() { _rows_loaded=0; }
+
+# ",1,3," -> 2 ; ",," -> 0. An empty set is a normal state, not a mistake.
+count_pos() {
+  local s="${1#,}"
+  s="${s%,}"
+  if [ -z "$s" ]; then printf '0'; else printf '%s' "$s" | awk -F, '{ print NF }'; fi
+}
+
+# **The judgement everything about emptiness is derived from.** Not "are
+# there rows" — "is there anywhere for the cursor to go *in this mode*".
+# Those are different questions and the difference is reachable daily: two
+# read panes in one tmux session collapse into a header plus a `⋯ 收起` line,
+# which is two rows and zero pane stops.
+stops_here() {
+  load_rows
   if [ "$mode" = "session" ]; then
+    count_pos "$HEADER_POS"
+  else
+    echo $(( $(count_pos "$PANE_POS") + $(count_pos "$EXTRA_POS") ))
+  fi
+}
+
+# The same count for the mode `h`/`l` would take you to, so the way out can
+# be offered only when it actually leads somewhere.
+stops_across() {
+  load_rows
+  if [ "$mode" = "session" ]; then
+    echo $(( $(count_pos "$PANE_POS") + $(count_pos "$EXTRA_POS") ))
+  else
+    count_pos "$HEADER_POS"
+  fi
+}
+
+# The header for a mode with nowhere to stand, assembled from the keys that
+# are **actually live right now** rather than from a fixed sentence.
+#
+# Three rules, each paid for by something measured:
+#
+#   - **The way out comes first.** This string gets truncated well before its
+#     end in a half-width list, and the exit was the part being cut. What
+#     survives truncation has to be the part you cannot do without.
+#   - **`esc` is named.** It was the one key that always worked here and the
+#     only one never advertised.
+#   - **Nothing dead is listed.** `a` appears only when something is actually
+#     collapsed, and the other mode only when it has stops. Everything else
+#     the normal header advertises — digits, `ctrl-x`, `j`/`k`, `Enter` — is
+#     inert in this state, so none of it is named.
+#
+# No parentheses anywhere in the result: fzf parses `change-header(…)` by
+# matching them, and one here would truncate the header at that point.
+empty_header() {
+  load_rows
+  local bits="q/esc 退出"
+  if [ -n "$ROWS" ] && printf '%s\n' "$ROWS" | awk -F'\t' '$4 == "-" { f = 1 } END { exit !f }'; then
+    bits="$bits · a 展开"
+  fi
+  if [ "$(stops_across)" -gt 0 ]; then
+    if [ "$mode" = "session" ]; then
+      bits="$bits · l 回到 pane 列表"
+    else
+      bits="$bits · h 看 session"
+    fi
+  fi
+  # The wording for a genuinely empty list is the startup guard's, verbatim
+  # minus its full stop. Arriving at the same state by a different route
+  # should not be described in different words.
+  if [ "$TOTAL" -eq 0 ]; then
+    bits="$bits · 没有找到仍然存活的 Claude Code tmux pane"
+  else
+    bits="$bits · 这一屏没有可以选的行"
+  fi
+  printf '%s' "$bits"
+}
+
+mode_header() {
+  # Derived, never remembered. Every cursor move re-sends this, so anything
+  # latched instead of computed would be wiped by the next `j` — which fires
+  # even when there is nothing to move to. That is the difference between a
+  # state and an event, and why `f`'s "filter dropped" notice, which *is* an
+  # event, is not routed through here.
+  if [ "$(stops_here)" -eq 0 ]; then
+    empty_header
+  elif [ "$mode" = "session" ]; then
     printf '%s' "$SESSION_HEADER"
   else
     printf '%s' "$PANE_HEADER"
@@ -138,6 +286,7 @@ if [ "${FZF_INPUT_STATE:-disabled}" = "enabled" ]; then
     # unescapable. `search()` re-runs the search against the now-empty
     # query and forces the full list back before search is switched off.
     esc)   echo "clear-query+search()+disable-search+hide-input+change-header($(mode_header))" ;;
+    enter) echo "accept" ;;
     *)     echo "ignore" ;;
   esac
   exit 0
@@ -191,13 +340,38 @@ remember_cursor() {
 # without it. When the rows are gone for real — everything archived, every
 # Claude exited — there is nothing to recover and the list stays empty, on
 # purpose. That state is legitimate, and it is escapable.
+#
+# **An all-provider list under `f` counts as nothing to show, the same as no
+# rows at all.** A team directory whose only member is the lead contributes
+# no rows — the lead's pane can only be deduced from where its teammates
+# are, so a team without any leaves it unfindable — and the external
+# provider's rows are emitted regardless of the filter. Press `f` in that
+# state and the list is neither empty nor useless: it is a screenful of
+# somebody's to-do items, under a key labelled 编队. That is the same lie as
+# a dead key, told the other way round, and it is caught here rather than as
+# a fourth special case because the recovery is identical: drop the filter,
+# rebuild, say so.
 FILTER_DROPPED=0
 rebuild_rows() {
   "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
-  if [ -s "$ROWS_FILE" ]; then
-    return 0
-  fi
+  # Before any early return: whatever was loaded describes the old list.
+  invalidate_rows
+  local filtering=0
   if [ -n "${TEAM_FILE:-}" ] && [ "$(cat "$TEAM_FILE" 2>/dev/null)" = "1" ]; then
+    filtering=1
+  fi
+  if [ -s "$ROWS_FILE" ]; then
+    if [ "$filtering" = 0 ]; then
+      return 0
+    fi
+    # Under the filter, a pane row is by construction a team pane: sessions
+    # without one are dropped whole. Provider rows carry no pane id, so
+    # "is there a pane row" is exactly "did the filter find anything".
+    if awk -F'\t' '$2 != "" { f = 1 } END { exit !f }' "$ROWS_FILE"; then
+      return 0
+    fi
+  fi
+  if [ "$filtering" = 1 ]; then
     printf '0' > "$TEAM_FILE"
     "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
     FILTER_DROPPED=1
@@ -241,12 +415,25 @@ reload_keeping_place() {
       }
     }
   ' "$ROWS_FILE")
-  # Say so when the filter was dropped underneath the keypress, or `f`
-  # reads as a key that silently does nothing. The header is restored by
-  # the next cursor move, which re-sends the header for its own mode.
-  local notice=""
-  [ "$FILTER_DROPPED" = 1 ] && notice="change-header($TEAM_EMPTY_HEADER)+"
-  echo "${notice}reload-sync(cat '$ROWS_FILE')+pos(${pos:-1})"
+  # The header goes out on every rebuild, not only when something notable
+  # happened, because a rebuild is precisely when the answer can change:
+  # collapse the last two readable panes with `a` and the list still has
+  # rows but no longer has a stop. Nothing else would re-derive it until the
+  # next cursor move, and in that state the cursor cannot move.
+  #
+  # A state outranks an event when both apply. `f` dropping its filter is
+  # worth saying, but if what came back still has nowhere to stand then the
+  # way out matters more than the explanation — and the explanation would be
+  # wiped by the next keypress anyway, while the state would not.
+  local hdr
+  if [ "$(stops_here)" -eq 0 ]; then
+    hdr="$(empty_header)"
+  elif [ "$FILTER_DROPPED" = 1 ]; then
+    hdr="$TEAM_EMPTY_HEADER"
+  else
+    hdr="$(mode_header)"
+  fi
+  echo "change-header($hdr)+reload-sync(cat '$ROWS_FILE')+pos(${pos:-1})"
 }
 
 # fzf fires `load` every time the list finishes loading — including after
@@ -378,32 +565,24 @@ case "$dir" in
     echo "abort"
     exit 0
     ;;
+  enter)
+    # Enter on an empty list used to close the picker and jump nowhere:
+    # fzf accepts with no selection, the caller gets an empty string and
+    # exits quietly. Doing nothing at all is not much, but it is honest —
+    # closing the window is what `q` and `esc` are for, and a key that
+    # silently does something you did not ask for is worse than a key that
+    # does nothing. With rows present this is fzf's own `accept`, unchanged.
+    load_rows
+    if [ "$TOTAL" -eq 0 ]; then
+      echo "ignore"
+    else
+      echo "accept"
+    fi
+    exit 0
+    ;;
 esac
 
-if [ -n "${ROWS_FILE:-}" ] && [ -s "$ROWS_FILE" ]; then
-  rows="$(cat "$ROWS_FILE")"
-else
-  rows="$("$BIN_DIR/list-rows.sh")"
-fi
-TOTAL=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
-# Four row kinds, and the cursor treats them differently: session headers
-# (empty pane id, empty row number, no kind) stop only in session mode,
-# pane rows (a %pane id) stop only in pane mode, the "⋯ 收起 N 个" summary
-# (empty pane id, row number "-") stops in neither — it's a label, not a
-# destination — and external provider items (field 5 == "extra") stop in
-# pane mode alongside the panes, since Enter acts on them too. Hence
-# separate position sets rather than one negated set.
-HEADER_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 == "" && $4 == "" && $5 == "") print NR }' | paste -sd, -),"
-# Teammate rows (field 5 == "mate") are excluded: they carry a pane id, so
-# the bare `$2 != ""` test used to take them, and the cursor stopped on
-# every teammate on its way past a team — walking you through rows that
-# repeat what their lead's row already says, to reach a lead you'd wanted
-# in one step. They stay visible, and a search hit can still act on one;
-# they are simply not somewhere j/k stops. Under `f` list-rows.sh omits
-# the marker, so in that mode they are ordinary pane rows again — which is
-# the whole point of that mode.
-PANE_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($2 != "" && $5 != "mate") print NR }' | paste -sd, -),"
-EXTRA_POS=",$(printf '%s\n' "$rows" | awk -F'\t' '{ if ($5 == "extra") print NR }' | paste -sd, -),"
+load_rows
 
 # Digit key in navigation mode: type a pane-row number (the gutter number
 # shown in each row) and jump there. A digit still jumps *instantly* the
@@ -424,11 +603,11 @@ if [ "$dir" = "digit" ]; then
   # attached to its pane, which makes the *visible* numbers sparse (1, 4,
   # 7, 12…). "Nth pane row" would land on the wrong pane the moment
   # anything is hidden.
-  line=$(printf '%s\n' "$rows" | awk -F'\t' -v n="$n" '$4 == n { print NR; exit }')
+  line=$(printf '%s\n' "$ROWS" | awk -F'\t' -v n="$n" '$4 == n { print NR; exit }')
   # Likewise "can these digits still be extended" is no longer n*10 <=
   # total: with gaps, what matters is whether any visible number starts
   # with what's typed so far and is longer.
-  extendable=$(printf '%s\n' "$rows" \
+  extendable=$(printf '%s\n' "$ROWS" \
     | awk -F'\t' -v p="$n" '$4 != "" && length($4) > length(p) && index($4, p) == 1 { c++ } END { print c + 0 }')
   if [ "$n" -ge 1 ] && [ "$extendable" -gt 0 ]; then
     # More digits could still follow, so hold the prefix. If it also names a
@@ -541,19 +720,15 @@ if [ "$idx" -lt 1 ] || [ "$idx" -gt "$TOTAL" ] || ! is_stop "$idx"; then
   idx="$orig"
 fi
 
-case "$dir" in
-  left)
-    echo "change-header($SESSION_HEADER)+pos($idx)"
-    ;;
-  right)
-    echo "change-header($PANE_HEADER)+pos($idx)"
-    ;;
-  *)
-    # The header goes out with every cursor move, not just the mode
-    # switches. It is the same string that is already showing, so it costs
-    # a redraw of one line and changes nothing — except after a
-    # $TEAM_EMPTY_HEADER notice, which is how that notice clears itself
-    # without a second piece of per-instance state to remember it by.
-    echo "change-header($(mode_header))+pos($idx)"
-    ;;
-esac
+# One branch, for every direction. The mode switches used to name their own
+# header, which was fine while a mode had exactly one — but a mode's header
+# now depends on whether that mode has anywhere to stand, and `mode` already
+# holds the new value by this point, so `mode_header` answers for the mode
+# being switched *to*. Naming the string here instead meant `h` on an empty
+# list swapped one set of dead keys for a different set of dead keys.
+#
+# The header goes out with every cursor move, not just the switches. It is
+# usually the same string already showing, so it costs a redraw of one line
+# — and it is how both the `f` notice and a stale empty-state header clear
+# themselves without a second piece of per-instance state to remember them by.
+echo "change-header($(mode_header))+pos($idx)"
