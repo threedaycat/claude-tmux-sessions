@@ -785,6 +785,21 @@ prerequisite hasn't landed, and until that line existed such a member
 looked busy from its own pane and stuck from the session header — one fact
 that only one of the two surfaces would tell you.
 
+> **What this rule gives up, deliberately.** "A blocker I cannot see" has
+> two causes, and **on disk they are the same thing**: a task that finished
+> and had its file deleted, and a `blockedBy` pointing at an id that never
+> existed. Nothing distinguishes them — there is no tombstone, and ids are
+> not dense enough to infer one. Treating the invisible case as *finished*
+> is right for the first, which is the normal end of every task's life, and
+> it means **a dangling reference will never be reported again**. That is
+> the price, it is paid knowingly, and the alternative costs more: a real
+> `挡住` against a deleted task sends somebody looking for work that is
+> done, every day, while a dangling id is a malformed task list nobody has
+> in practice. **Do not "fix" this back** — the two are indistinguishable,
+> so any change that surfaces dangling ids also resurrects the false
+> positive. The private task-runner repo states the same rule for the same
+> reason; the two must not diverge.
+
 ## The live preview
 
 Moving the selection instantly re-runs `tmux capture-pane -S -200` on the
