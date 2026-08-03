@@ -164,7 +164,7 @@ which renders the quota bar, a WAIT badge only while something's blocked, then
 counts of unread-done and running:
 
 <p align="center">
-  <img src="docs/statusbar.png" alt="Status line segment: 5h quota bar at 32%, a red WAIT badge for deploy-script, then 2 done-unread and 1 running" width="700">
+  <img src="docs/statusbar.png" alt="Status line segment: 5h quota bar at 32%, a red WAIT badge for deploy-script waiting 12s, then 5 done-unread and 3 running" width="700">
 </p>
 
 ### Check it's working

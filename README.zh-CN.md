@@ -139,7 +139,7 @@ bind W run-shell '~/.claude/hooks/jump-top.sh'
 渲染出来是额度条、仅在有东西被卡住时才出现的 WAIT badge,然后是完成未读数和运行中的计数:
 
 <p align="center">
-  <img src="docs/statusbar.png" alt="状态栏片段:5 小时额度条 32%、deploy-script 的红色 WAIT badge、然后是 2 个完成未读和 1 个运行中" width="700">
+  <img src="docs/statusbar.png" alt="状态栏片段:5 小时额度条 32%、deploy-script 的红色 WAIT badge(已等 12 秒)、然后是 5 个完成未读和 3 个运行中" width="700">
 </p>
 
 ### 确认装好了
