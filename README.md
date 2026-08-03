@@ -205,6 +205,12 @@ Then remove the four `tmux_status_update.py` hook entries from
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
   `50` — an even split, so the preview is about as wide as the pane it's
   showing) to change it.
+- `t` opens the token page: an overview of today (turns, and the four token
+  classes as share bars) plus a per-session ranking. It sorts by **tokens read
+  in** and highlights **mean context per turn**, because cost is roughly turns ×
+  the context each turn carried and ~98% of the tokens are re-reads of existing
+  context — so turn count alone misjudges which session is expensive. `1` / `7`
+  switch between today and the last 7 days; `q` returns to the list.
 - `f` narrows the list to your Agent Teams and the panes on them — only live
   when you actually have a team, and the way to put the cursor on a teammate.
   See below.
