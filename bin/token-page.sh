@@ -1,22 +1,34 @@
 #!/usr/bin/env bash
 # The picker's token page: full-screen "where did the tokens go", opened
-# with `t` and left with q/Esc/Enter. bin/token-report.py does the
-# counting; this only owns the screen — sizing the report to the terminal
-# and switching the window between today and the last 7 days.
+# with `t` and left with q/Esc/Enter. bin/token-report.py does the counting
+# and the drawing; this script owns the screen and the keys.
 #
-# It's a read-key loop rather than a second fzf instance because the page
-# isn't a list: nothing here is selectable, and nesting fzf inside fzf's
-# execute() would mean two sets of key bindings fighting over j/k for no
-# gain. `1` / `7` re-render in place; anything else is ignored, so a
-# stray keypress can't drop you out of the page by accident.
+# It is a second fzf, nested inside the picker's execute(). It used to be a
+# read-key redraw loop, on the reasoning that the page isn't a list —
+# nothing was selectable, so two sets of key bindings would have fought
+# over j/k for no gain. Both halves of that turned out wrong. The ranking
+# *is* a list, and what you want from a row ("which session is this, and
+# what is it doing with all those tokens") is exactly what a preview window
+# is for. Worse, the loop redrew on **every** keypress, including the ones
+# it went on to ignore — a ~1s transcript scan to arrive back at the same
+# screen, which is what made the page feel like it was chewing.
+#
+# Now the scan lives in token-report.py's cache: once per window, and every
+# render after that is a small JSON read. j/k move, the preview follows,
+# `1`/`7` switch windows (the other window is warmed in the background
+# while you read this one, so the switch is usually instant), `r` rescans
+# on purpose, and no other key costs anything.
+#
+# Which window is on screen is not tracked here. Each row carries the cache
+# it came from as its third field, so `{3}` tells the preview what to read
+# and tells `r` what to rescan — the one thing that costs is an empty list
+# (a window with no turns in it at all), where there is no row to carry it
+# and `r` therefore does nothing.
 set -euo pipefail
 
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-DIM=$'\033[2m'
-RESET=$'\033[0m'
-
-days="${1:-1}"
+REPORT="$BIN_DIR/token-report.py"
+PY=(python3 "$REPORT")
 
 # Bound directly to `t` in the picker (see the comment there), so it also
 # fires while the search input is open — where `t` must type a t, not open
@@ -25,43 +37,70 @@ if [ "${FZF_INPUT_STATE:-disabled}" = "enabled" ]; then
   exit 0
 fi
 
-while :; do
-  # Size from stty on the tty itself, not tput: inside command substitution
-  # tput's stdout is a pipe, so ncurses falls back to asking stderr — and
-  # with stderr redirected (as it was here, to swallow errors) it finds no
-  # terminal at all and reports the terminfo default 24x80. The page then
-  # sized itself for a screen a third the real height.
-  size=$(stty size < /dev/tty 2>/dev/null || echo '30 100')
-  lines=${size%% *}
-  cols=${size##* }
-  # Rows left for the ranking after the overview block, the two table
-  # header lines, the two footnotes and this page's own footer.
-  top=$(( lines - 17 ))
-  [ "$top" -lt 3 ] && top=3
+days="${1:-1}"
 
-  clear
-  echo
-  python3 "$BIN_DIR/token-report.py" --days "$days" --top "$top" --width "$cols" || true
-  echo
-  if [ "$days" -le 1 ]; then
-    echo "${DIM}  1 今日 · 7 近 7 天 · q 返回        [今日]${RESET}"
-  else
-    echo "${DIM}  1 今日 · 7 近 7 天 · q 返回        [近 7 天]${RESET}"
-  fi
+CACHE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-tmux-tokens.XXXXXX")"
+trap 'rm -rf "$CACHE_DIR"' EXIT
 
-  # -s: don't echo the key; -n1: a single character, no Enter needed.
-  # Explicitly from /dev/tty: the picker feeds fzf its rows on stdin, and a
-  # child of fzf's execute() inherits that same (already-exhausted) pipe —
-  # so a plain `read` returns instantly at EOF and the page flashes past
-  # without ever showing.
-  key=""
-  IFS= read -rsn1 key < /dev/tty || true
-  case "$key" in
-    1|t) days=1 ;;
-    7)   days=7 ;;
-    q|"") break ;;                 # q, or Enter (read as empty)
-    $'\033') break ;;              # Esc — one read, so no arrow-key tail
-  esac
-done
+# Size from stty on the tty itself, not tput: inside command substitution
+# tput's stdout is a pipe, so ncurses falls back to asking stderr — and
+# with stderr redirected it reports the terminfo default 24x80, which sizes
+# the page for a third of the screen.
+size=$(stty size < /dev/tty 2>/dev/null || echo '30 100')
+cols=${size##* }
+# The list side of the split — what the header lines and the rows have to
+# fit into, minus fzf's own gutter and the preview border.
+PREVIEW_PCT="${CLAUDE_TMUX_TOKEN_PREVIEW_WIDTH:-52}"
+list_w=$(( cols - cols * PREVIEW_PCT / 100 - 4 ))
+[ "$list_w" -lt 40 ] && list_w=40
 
-clear
+# The window you asked for, scanned now: the page can't draw without it.
+"${PY[@]}" --scan --days "$days" --cache "$CACHE_DIR/$days.json" || true
+# The other one, warmed in the background — switching windows is the only
+# thing left here that costs a scan, and it is the key most likely to be
+# pressed within seconds of the page opening. If you beat the warmer to it
+# the bind's own --scan does the work instead: duplicated, never corrupt
+# (token-report.py replaces the cache atomically).
+other=7; [ "$days" -gt 1 ] && other=1
+( "${PY[@]}" --scan --days "$other" --cache "$CACHE_DIR/$other.json" \
+    >/dev/null 2>&1 & ) || true
+
+rows() {   # $1 = cache file
+  printf 'python3 %q --rows --cache %q --width %s' "$REPORT" "$1" "$list_w"
+}
+head_of() { # $1 = cache file
+  printf 'python3 %q --overview --cache %q --width %s' "$REPORT" "$1" "$list_w"
+}
+switch() {  # $1 = days — the three actions a window switch takes
+  local c="$CACHE_DIR/$1.json"
+  printf 'execute-silent(python3 %q --scan --days %s --cache %q)' "$REPORT" "$1" "$c"
+  printf '+reload-sync(%s)+transform-header(%s)+first' "$(rows "$c")" "$(head_of "$c")"
+}
+
+FOOTER=$'\033[2m  1 今日 · 7 近 7 天 · j/k 选会话 · p 预览 · r 重新统计 · q 返回\033[0m'
+
+# --disabled --no-input: no search box, so letters are inert unless bound —
+# the same navigation model as the picker, and it means a stray keypress
+# can't drop you out of the page by accident. Enter aborts rather than
+# accepts: these rows are not choices, and accept would print the selected
+# row onto a stdout that belongs to the picker's screen.
+#
+# Deliberately no --height: fzf then runs full-screen on the alternate
+# buffer, so leaving the page restores the picker's screen underneath
+# instead of making it redraw.
+fzf --ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input \
+  --layout=reverse \
+  --header="$("${PY[@]}" --overview --cache "$CACHE_DIR/$days.json" --width "$list_w")" \
+  --footer="$FOOTER" \
+  --preview "python3 $(printf '%q' "$REPORT") --detail {2} --cache {3} --width \${FZF_PREVIEW_COLUMNS:-80} --lines \${FZF_PREVIEW_LINES:-40}" \
+  --preview-window="right,${PREVIEW_PCT}%,border-left,nowrap" \
+  --preview-label=' 这个会话花在哪 ' \
+  --bind "j:down" --bind "k:up" \
+  --bind "1:$(switch 1)" \
+  --bind "t:$(switch 1)" \
+  --bind "7:$(switch 7)" \
+  --bind "r:execute-silent(python3 $(printf '%q' "$REPORT") --scan --force --cache {3})+reload-sync(python3 $(printf '%q' "$REPORT") --rows --cache {3} --width $list_w)+transform-header(python3 $(printf '%q' "$REPORT") --overview --cache {3} --width $list_w)" \
+  --bind "p:toggle-preview" \
+  --bind "enter:abort" --bind "q:abort" \
+  < <("${PY[@]}" --rows --cache "$CACHE_DIR/$days.json" --width "$list_w") \
+  >/dev/null || true

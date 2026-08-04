@@ -213,12 +213,18 @@ Then remove the four `tmux_status_update.py` hook entries from
   state), then the 5h quota, the 7-day window, today's tokens and the 14-day
   sparkline. It renders once and waits — `r` refreshes, `q` returns — and is
   read-only: looking at it marks nothing read.
-- `t` opens the token page: an overview of today (turns, and the four token
-  classes as share bars) plus a per-session ranking. It sorts by **tokens read
-  in** and highlights **mean context per turn**, because cost is roughly turns ×
-  the context each turn carried and ~98% of the tokens are re-reads of existing
-  context — so turn count alone misjudges which session is expensive. `1` / `7`
-  switch between today and the last 7 days; `q` returns to the list.
+- `t` opens the token page: an overview of the window (turns, and the four token
+  classes as share bars) above a **per-session ranking you can walk**. It sorts
+  by **tokens read in** and highlights **mean context per turn**, because cost is
+  roughly turns × the context each turn carried and ~98% of the tokens are
+  re-reads of existing context — so turn count alone misjudges which session is
+  expensive. Sessions are listed by name, not by id — whatever you or your team
+  called them, falling back to the session's opening question for ones that never
+  got a name. `j`/`k` move and the preview shows that session in full: what it
+  was asked to do, where its tokens went, a per-day sparkline, and its live
+  screen if it's still open (the tail of its last reply if it isn't). `1` / `7`
+  switch between today and the last 7 days, `p` collapses the preview, `r`
+  recounts, `q` returns to the list.
 - `l` on a team lead's row unfolds its teammates so `j`/`k` walk them; `h` on
   one of them folds the team back up. `h`/`l` are already one level out and one
   level in — session mode is the level above panes — and on these two kinds of
