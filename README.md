@@ -205,6 +205,14 @@ Then remove the four `tmux_status_update.py` hook entries from
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
   `50` — an even split, so the preview is about as wide as the pane it's
   showing) to change it.
+- `o` opens the overview: one screen for "I'm back — what's the situation".
+  **The first line is the answer** — `5 个有结果等你看`, or `没人等你 · 2 个还在跑`
+  — and below it, in the order you actually ask: **what needs you** (⏸ WAIT
+  first, then unread ✔ DONE, longest-waiting at the top), **what's still
+  running**, **your teams** (roster, task counts, and each member's own pane
+  state), then the 5h quota, the 7-day window, today's tokens and the 14-day
+  sparkline. It renders once and waits — `r` refreshes, `q` returns — and is
+  read-only: looking at it marks nothing read.
 - `t` opens the token page: an overview of today (turns, and the four token
   classes as share bars) plus a per-session ranking. It sorts by **tokens read
   in** and highlights **mean context per turn**, because cost is roughly turns ×

@@ -50,7 +50,11 @@ if [ "${CLAUDE_TMUX_SHOW_ALL:-}" = "1" ]; then printf '1' > "$SHOW_ALL_FILE"; el
 # Nobody who hasn't switched Agent Teams on pays anything for this beyond
 # the stat.
 CLAUDE_HOME_DIR="${CLAUDE_HOME:-$HOME/.claude}"
-PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+# `o 总览` leads: it is the "what's the situation" screen, so it is what you
+# want when you have just come back and don't know where to look yet — and
+# the header is cut off around column 78 on the list side of a split picker,
+# so the front is the only place a new entry is reliably on screen.
+PANE_HEADER='o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 if [ -d "$CLAUDE_HOME_DIR/teams" ]; then
   TEAM_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-teamonly.XXXXXX")"
   export TEAM_FILE
@@ -64,7 +68,7 @@ if [ -d "$CLAUDE_HOME_DIR/teams" ]; then
   # row, and this string is already wider than the list side of a split
   # picker, so a permanent entry would push an existing one off the end.
   # skip-header.sh appends the hint on the rows where the key works.
-  PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · f 编队 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+  PANE_HEADER='o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · f 编队 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 fi
 # Exported so skip-header.sh uses the same string when it restores the
 # header after a mode switch. It used to be written out twice, once here
@@ -164,6 +168,8 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   # type a t. token-page.sh returns immediately in that state (it reads
   # $FZF_INPUT_STATE, which fzf exports to every child).
   --bind "t:transform($BIN_DIR/skip-header.sh \"{n}\" tokens t)+execute($BIN_DIR/token-page.sh 1)"
+  # `o` opens the overview — same shape as `t`, and for the same reason.
+  --bind "o:transform($BIN_DIR/skip-header.sh \"{n}\" overview o)+execute($BIN_DIR/overview-page.sh)"
   --bind "q:transform:$BIN_DIR/skip-header.sh \"{n}\" quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh \"{n}\" esc"
   --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh \"{n}\" archive"
