@@ -619,9 +619,10 @@ each of them in turn walked you past the destination through rows that
 mostly repeat what the lead's row already said.
 
 The cost is real and deliberate — no number, no cursor, therefore no
-`Enter`. What remains is `/` search (which can still surface and act on
-one — Enter there jumps to the pane, and that path is left working on
-purpose), tmux's own pane switching once you're in the window, and `f`.
+`Enter`. What remains is `l` (below, which lifts it for one team at a
+time), `/` search (which can still surface and act on one — Enter there
+jumps to the pane, and that path is left working on purpose), tmux's own
+pane switching once you're in the window, and `f`.
 
 Under `f` the marker is not emitted at all, so teammates are ordinary pane
 rows again. That mode exists to look at them, so there they are the
@@ -633,11 +634,63 @@ machinery as `a` — including numbering *before* filtering, so nothing
 renumbers. With no team present the key is inert and the header doesn't
 mention it.
 
-It survived the fold because it acquired a second job on the way: it is
-the only way to put the cursor on a teammate. Without it the marker above
-would make them permanently unreachable except through `/` search, so the
-key that looked redundant once teams stopped having their own block is in
-fact the escape hatch for the row kind that stopped being selectable.
+It survived the fold because it acquired a second job on the way: for a
+while it was the only way to put the cursor on a teammate. Without it the
+marker above would have made them permanently unreachable except through
+`/` search, so the key that looked redundant once teams stopped having
+their own block turned out to be the escape hatch for the row kind that
+stopped being selectable.
+
+**`l` unfolds one lead's teammates** so `j`/`k` walk them, and `h` on one
+of them folds the team again. `h` and `l` were already one level out and
+one level in — session mode is the level above panes — and on these two
+kinds of row they simply mean one level further. Everywhere else they still
+switch cursor mode exactly as before.
+
+It is the small version of `f`: `f` re-renders the whole list as teams,
+which is what you want when the question is *who is on which team*; `l` is
+what you want when the question is *this* team and the answer is two rows
+down. Nothing is rebuilt and nothing renumbers — the rows were on screen
+the whole time, only unreachable.
+
+**The entire state is one row index**, in `$EXPAND_FILE`. It can be that
+small because `bin/list-rows.sh` emits a team's members directly below
+their lead, so the teammates *are* the contiguous run of `mate` rows under
+that index. Nothing in the cursor code needs to know agent ids, or which
+pane leads which, and nothing has to stay in agreement with the roster.
+
+The unfold is an excursion, not a mode: walking out of the run folds it
+again, and so does anything that rebuilds the list (`a`, `f`, `ctrl-x`) or
+jumps away by number. The lead itself counts as inside the run, so `k` off
+the first teammate lands on its lead with the team still open, and one more
+`k` closes it on the way past.
+
+Three things had to be handled for that to hold together:
+
+- **A rebuild while sitting on a teammate.** `remember_cursor` walks up to
+  the lead before remembering, because the rebuild folds the team: without
+  it the pane-id match finds the teammate again and `pos()` parks the cursor
+  on a row `j`/`k` can no longer move from. Under `f` it never fires —
+  there the marker is absent, teammates are ordinary rows, and staying on
+  one is correct.
+- **The header after a rebuild.** `reload_keeping_place` now sends one, and
+  deliberately without a row: it runs from key branches *above* the row
+  predicates, where `is_pane`/`is_mate` don't exist yet — and a call to a
+  not-yet-defined function inside a condition fails *quietly*, which is how
+  the row-aware version silently never fired there. It would be wrong even
+  working: those predicates are built from the rows that function has just
+  replaced.
+- **A stale index.** If the remembered lead has no `mate` row under it any
+  more, the unfold folds itself on the next keypress rather than trusting
+  the number.
+
+The `l 展开队员` hint is **contextual, and goes in front**. The pane header
+is already 115 columns while the list side of a split picker is around 79,
+so it arrives truncated — a permanent thirteenth entry would only push an
+existing one off the end, and anything *appended* is never on screen at all.
+It is advertised on the rows where the key does something, which is also
+where you would look for it, and on a lead row `l` is the most interesting
+key there is.
 
 **`f` may never produce an empty list**, and "is there a team" is the wrong
 question to decide that on. A team directory outlives the teammates in it,

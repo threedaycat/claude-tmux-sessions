@@ -41,12 +41,14 @@ export SHOW_ALL_FILE
 export CLAUDE_TMUX_SHOW_ALL_FILE="$SHOW_ALL_FILE"
 if [ "${CLAUDE_TMUX_SHOW_ALL:-}" = "1" ]; then printf '1' > "$SHOW_ALL_FILE"; else printf '0' > "$SHOW_ALL_FILE"; fi
 
-# Agent Teams. `f` filters the list down to the teams and their panes, and
-# it only exists when there is a team to filter — checked once, here, with
-# a single stat. No team means no TEAM_FILE, which means skip-header.sh
-# returns `ignore` for `f` exactly as it does for any unbound letter, and
-# the header below never mentions it. Nobody who hasn't switched Agent
-# Teams on pays anything for this beyond the stat.
+# Agent Teams. `f` filters the list down to the teams and their panes, `l`
+# unfolds one lead's teammates in place, and both only exist when there is a
+# team at all — checked once, here, with a single stat. No team means no
+# TEAM_FILE and no EXPAND_FILE, which means skip-header.sh returns `ignore`
+# for `f` exactly as it does for any unbound letter, `l` keeps its plain
+# meaning (switch back to pane mode), and the header below mentions neither.
+# Nobody who hasn't switched Agent Teams on pays anything for this beyond
+# the stat.
 CLAUDE_HOME_DIR="${CLAUDE_HOME:-$HOME/.claude}"
 PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 if [ -d "$CLAUDE_HOME_DIR/teams" ]; then
@@ -54,6 +56,14 @@ if [ -d "$CLAUDE_HOME_DIR/teams" ]; then
   export TEAM_FILE
   export CLAUDE_TMUX_TEAM_ONLY_FILE="$TEAM_FILE"
   printf '0' > "$TEAM_FILE"
+  # Which lead's teammates j/k may currently walk, as a row index. Written
+  # by `l`, cleared by `h` and by anything that rebuilds the list.
+  EXPAND_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-expand.XXXXXX")"
+  export EXPAND_FILE
+  # `l` is deliberately *not* listed here: it only does something on a lead
+  # row, and this string is already wider than the list side of a split
+  # picker, so a permanent entry would push an existing one off the end.
+  # skip-header.sh appends the hint on the rows where the key works.
   PANE_HEADER='j/k 选窗口 · 数字直跳 · h session · a 全部 · f 编队 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 fi
 # Exported so skip-header.sh uses the same string when it restores the
@@ -99,7 +109,7 @@ printf '%s\n' "$rows" > "$ROWS_FILE"
 PENDING_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-pending.XXXXXX")"
 export PENDING_FILE
 
-trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${TEAM_FILE:-}" "${INIT_FILE:-}"' EXIT
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${TEAM_FILE:-}" "${EXPAND_FILE:-}" "${INIT_FILE:-}"' EXIT
 
 # Starts with search disabled AND the input line hidden (--disabled
 # --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
