@@ -37,4 +37,12 @@ if [ -n "$pane" ] && tmux has-session -t "$pane" 2>/dev/null; then
   exit 0
 fi
 
-echo "change-footer(${TOKEN_FOOTER_WARN:-  这个会话已经不在 tmux 里了,跳不过去})"
+# Read from a file rather than inlined: a footer carrying the quota block has
+# `(07-31)` in its sparkline line, and fzf parses an action's argument by
+# matching parentheses — one unbalanced bracket in whatever the page decided
+# to put down there would silently truncate the action.
+if [ -n "${JUMP_WARN_FILE:-}" ] && [ -s "$JUMP_WARN_FILE" ]; then
+  echo "transform-footer(cat $JUMP_WARN_FILE)"
+else
+  echo "change-footer(  这里没有可以跳过去的 pane)"
+fi

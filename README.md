@@ -206,13 +206,16 @@ Then remove the four `tmux_status_update.py` hook entries from
   `50` — an even split, so the preview is about as wide as the pane it's
   showing) to change it.
 - `o` opens the overview: one screen for "I'm back — what's the situation".
-  **The first line is the answer** — `5 个有结果等你看`, or `没人等你 · 2 个还在跑`
-  — and below it, in the order you actually ask: **what needs you** (⏸ WAIT
-  first, then unread ✔ DONE, longest-waiting at the top), **what's still
-  running**, **your teams** (roster, task counts, and each member's own pane
-  state), then the 5h quota, the 7-day window, today's tokens and the 14-day
-  sparkline. It renders once and waits — `r` refreshes, `q` returns — and is
-  read-only: looking at it marks nothing read.
+  **The first line is the answer** — `5 个有结果等你看`, or `没人等你 · 2 个还在跑`.
+  Below it, **one card per tmux session**, most urgent session first, each
+  titled with what it holds (`✔ 3  ▶ 1  +6 安静`) and the team running in it.
+  The 5h quota, the 7-day window, today's tokens and the 14-day sparkline sit
+  pinned at the bottom while you walk the cards. `j`/`k` move, `Enter` jumps
+  (a pane row to its pane, a card title to where you last were in that
+  session), `r` refreshes, `q` returns. The preview is **state, not screen** —
+  the list already shows you screens: where this pane is, how long it's been
+  there, how full its context is, which team owns it, what it's read in today.
+  Read-only: looking at it marks nothing read.
 - `t` opens the token page: an overview of the window (turns, and the four token
   classes as share bars) above a **per-session ranking you can walk**. It sorts
   by **tokens read in** and highlights **mean context per turn**, because cost is
