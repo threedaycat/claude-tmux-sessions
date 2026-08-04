@@ -211,9 +211,14 @@ Then remove the four `tmux_status_update.py` hook entries from
   the context each turn carried and ~98% of the tokens are re-reads of existing
   context — so turn count alone misjudges which session is expensive. `1` / `7`
   switch between today and the last 7 days; `q` returns to the list.
+- `l` on a team lead's row unfolds its teammates so `j`/`k` walk them; `h` on
+  one of them folds the team back up. `h`/`l` are already one level out and one
+  level in — session mode is the level above panes — and on these two kinds of
+  row they just mean one level further. On every other row they do exactly what
+  they always did. See below.
 - `f` narrows the list to your Agent Teams and the panes on them — only live
-  when you actually have a team, and the way to put the cursor on a teammate.
-  See below.
+  when you actually have a team. `l` is the small version of it: `f` answers
+  *who is on which team*, `l` answers *who is on this one*. See below.
 - `Enter` jumps · `ctrl-x` archives the highlighted pane · `q` / `Esc` closes.
 
 ### Agent Teams
@@ -227,11 +232,17 @@ gives you a two-part preview: the full roster and shared task list on top —
 including the members that have no pane to jump to — then the session's own
 panes below.
 
-Teammate rows are indented under their lead and are shown rather than
-selected: `j`/`k` step over them and they have no jump number, so a team costs
-one stop in the list instead of one per member. The lead is the useful
+Teammate rows are indented under their lead and are, by default, shown rather
+than selected: `j`/`k` step over them and they have no jump number, so a team
+costs one stop in the list instead of one per member. The lead is the useful
 destination anyway — its teammates are in the same tmux window, a native
-pane-switch away. Press `f` when you do want to move among them directly.
+pane-switch away.
+
+When you do want to move among them, press `l` on the lead: that one team's
+members become stops, `j`/`k` walk them, and `h` folds it back. It is an
+excursion rather than a mode to remember you are in — walking out of the team
+folds it again, and so does rebuilding the list (`a` / `f` / `ctrl-x`) or
+jumping away by number. Use `f` to see every team at once.
 
 The name is printed in the colour Claude Code assigned that teammate, so
 saying "this pane is on a team" costs the list no columns at all — the name
