@@ -858,6 +858,54 @@ to `~/.claude/tmux-quota-cache.json` and fall back to it (muted grey bar + a `~`
 "last known" marker) until fresh data returns, so the segment never just blinks
 out. A quiet `5h ░░░░░░░░░░ ?` placeholder shows only when there's no data at all.
 
+## The overview page (`o`)
+
+The row list is a list: it shows every tracked pane in tmux order and leaves
+the reading to you. That is the right shape for *going somewhere* and the
+wrong shape for the question you have when you sit back down, which is not
+"where is pane 12" but **"what happened while I was away"**.
+
+`o` answers it in the order you ask it: does anything need me (⏸ WAIT first,
+then unread ✔ DONE, longest-waiting first), what is still working (▶ RUN),
+how are the teams doing (roster, task counts, and each member's own pane
+state joined in by pane id). Then the resource half — 5h quota, 7-day
+window, today's tokens by model, the 14-day sparkline.
+
+**The greeting line is the whole point.** It states the number that decides
+what you do next — `5 个有结果等你看` — and states the good case out loud
+(`没人等你 · 2 个还在跑`) rather than leaving you to infer it from three
+empty lists. A dashboard you have to interpret is a list with extra steps.
+
+Three deliberate reuses, because this screen's only original content is the
+*bucketing*:
+
+- `display_name`, `label_of` and `fmt_age` are imported from
+  `bin/session-digest.py` (which has a `__main__` guard, so importing it
+  runs nothing; the hyphen in the filename is why it goes through
+  `importlib` rather than a plain import). A pane is therefore called the
+  same thing and its age worded the same way here as in the list and in the
+  preview. The first version of this screen named panes after their tmux
+  *window*, and three teammates in one window all came out as `lead` —
+  exactly the bug `display_name` exists to prevent.
+- The resource half is `bin/usage-footer.sh`, printed verbatim. It already
+  computes those numbers, in ANSI, and two implementations of one number is
+  how they come to disagree.
+- `agent_teams.snapshot()` for the roster and task counts.
+
+`input` (Claude idle, waiting on your next message) is rendered as DONE, the
+way the row list renders it — both mean "it finished, it's your turn", and
+this screen already groups them under `等你`. The rank is collapsed rather
+than the label, so the age phrasing follows automatically.
+`session-digest`'s own preview keeps IDLE separate because there the subject
+is one pane in detail.
+
+**It renders once and waits.** There is nothing to switch, so no keypress
+re-runs anything: `r` refreshes on purpose and every other key leaves. That
+matters because the halves are not equally cheap — the pane half is ~0.06s
+(one status file, one `tmux list-panes`, one roster read) while the footer
+reads transcripts and costs ~0.5s. Nothing is marked read: looking at the
+bridge is not visiting a pane.
+
 ## The token page (`t`)
 
 The footer answers "how much quota is left". The token page answers the next
