@@ -914,9 +914,12 @@ question — **where did it go** — across every tracked pane rather than one:
 it, `q` leaves.
 
 **Two blocks, in the order the question gets asked.** An overview of the window
-(turns, and the four token classes as share bars), then a per-session ranking.
-Only the second one is actionable: with two dozen Claudes running, "today cost a
-lot" isn't news — "*this* one costs a lot" is.
+(turns, and the four token classes as share bars) as fzf's header, then a
+per-session ranking as the list itself. Only the second one is actionable: with
+two dozen Claudes running, "today cost a lot" isn't news — "*this* one costs a
+lot" is. Every session in the window gets a row now that the list scrolls, so the
+old "还有 N 个会话未显示" footnote has nothing left to say; the column head is the
+last header line, which keeps it pinned above the rows.
 
 **Why the ranking is sorted by tokens read in, and why `均/轮` is its own
 highlighted column.** Cost is roughly turns × the context each turn carried, and
@@ -958,16 +961,77 @@ to every child) and returns immediately in that state. The page needs none of th
 cursor-carrying that `a` and `ctrl-x` do: it reloads nothing, so fzf redraws the
 list exactly as it was.
 
-**A read-key loop, not a second fzf.** Nothing on the page is selectable, so
-nesting fzf inside fzf's `execute()` would only mean two sets of bindings
-fighting over `j`/`k`. `1` / `7` switch the window in place; every other key is
-ignored, so a stray keypress can't drop you out by accident. The keystroke is
-read from `/dev/tty` explicitly — a child of `execute()` inherits the picker's
-row pipe on stdin, and a plain `read` would hit EOF instantly and flash the page
-past. Terminal size comes from `stty size < /dev/tty` rather than `tput`: inside
+**It is a second fzf, and it started out not being one.** The first version was
+a read-key redraw loop, on the reasoning that nothing on the page was selectable,
+so nesting fzf inside fzf's `execute()` would only mean two sets of bindings
+fighting over `j`/`k`. Both halves of that were wrong, and the page said so out
+loud: the ranking *is* a list, what you want from a row ("which session is this,
+and what is it doing with all those tokens") is exactly what a preview window is
+for, and — the part that actually hurt — **the loop redrew on every keypress,
+including the keys it went on to ignore.** One `case` handled `1`/`7`/`q`; every
+other key fell through to a fresh ~1s transcript scan that arrived back at the
+same screen. Reported as "每次点击一个按键就要刷新 1s,感觉很卡".
+
+Terminal size still comes from `stty size < /dev/tty` rather than `tput`: inside
 command substitution tput's stdout is a pipe, so ncurses asks stderr instead, and
 with stderr redirected it finds no terminal and reports the terminfo default
-24×80 — which sized the page for a third of the real screen.
+24×80 — which sized the page for a third of the real screen. The page runs
+without `--height`, so fzf takes the alternate screen buffer and leaving it
+restores the picker's screen underneath instead of making it redraw.
+
+**The scan is split from the rendering by a cache file, and that is what makes
+the page cheap.** `token-report.py --scan --days N --cache F` writes one JSON
+file; `--overview`, `--rows` and `--detail` only ever read it. So a cursor move
+costs a small JSON read (~30ms including the live screen capture), not a scan.
+Three consequences worth knowing:
+
+- **Renders never scan.** A missing cache makes `--rows`/`--detail` print nothing
+  and exit 0, rather than quietly doing the 1s of work this split exists to keep
+  off the keypress.
+- **The window switch is warmed in the background.** Opening the page scans the
+  window you asked for, then forks a scan of the other one. `7` is usually
+  instant (measured 117ms and 132ms for the round trip); beat the warmer to it
+  and the bind's own `--scan` does the work instead — duplicated, never corrupt,
+  because the cache is replaced with `os.replace`.
+- **The page tracks no state of its own.** Each row carries the cache it was
+  built from as its third field, so `{3}` tells the preview what to read and
+  tells `r` what to rescan. `--scan --force` with no `--days` takes the window
+  from the cache it is replacing, which is what lets `r` be one string for both
+  windows. The cost is an empty window (no turns at all): no row, so no `{3}`,
+  so `r` does nothing there.
+
+**`reload`, not `reload-sync`, put the preview one window behind.** The switch is
+four actions — `execute-silent(scan)+reload(rows)+transform-header(overview)+first`
+— and `reload` is asynchronous: `first` applied to the *old* list, the preview
+fired for the old row 1 out of the old cache, and nothing re-fired it when the
+new rows landed. The screen then showed the 7-day ranking beside a card of
+today's numbers, which is the one failure mode a page like this must not have.
+`reload-sync` waits for the rows before applying the rest.
+
+**The ranking finally has session names in it.** It used to print `sid[:8]` — the
+one thing about a session that means nothing to the person reading it. The chain
+is the picker's chain (`list-rows.sh`), joined to a transcript through the status
+file's `session_id`: a name someone chose (`claude_sessions.py`) → the Agent
+Teams roster name → the pane title → the tmux window name. Below that sits one
+level the picker doesn't have: **a session's opening prompt**, which is the only
+human-readable label a transcript with no live pane has left. It is marked dim in
+the list and titled `未命名会话` in the card, because a sentence is not a name and
+a truncated one must not read as somebody's choice. Bounded to the top 30 rows —
+it is a file read per session, and the tail of the ranking is not what anybody is
+looking at.
+
+**What the preview says, and why the live screen is at the bottom of it.** The
+card is who the session is (name, status, elapsed, `session:window`, pane id,
+short id, cwd), what it was asked to do (its opening prompt), and where its
+tokens went (turns, mean per turn, peak, model, last activity, the four classes
+as share bars, a per-day sparkline in the 7-day view, and its share of the
+window's read volume). Under that: the live screen for a session still open in a
+pane, or the tail of its last reply for one that has closed. This is the
+*opposite* order from `preview-row.sh`, which puts the screen first because a
+pane preview is a screen dump with a footnote. Here the numbers are the point, so
+they get the top and the capture is trimmed to what is actually left over
+(`capture-pane -S -N` returns N + pane-height lines, so a 30-row budget came
+back as 75 and pushed the card off the top until the tail was taken explicitly).
 
 ## Surviving a tmux crash (tmux-resurrect integration)
 
