@@ -222,9 +222,10 @@ Then remove the four `tmux_status_update.py` hook entries from
   called them, falling back to the session's opening question for ones that never
   got a name. `j`/`k` move and the preview shows that session in full: what it
   was asked to do, where its tokens went, a per-day sparkline, and its live
-  screen if it's still open (the tail of its last reply if it isn't). `1` / `7`
-  switch between today and the last 7 days, `p` collapses the preview, `r`
-  recounts, `q` returns to the list.
+  screen if it's still open (the tail of its last reply if it isn't). `Enter`
+  takes you to that session's pane; on one that has already closed it says so
+  and stays put. `1` / `7` switch between today and the last 7 days, `p`
+  collapses the preview, `r` recounts, `q` returns to the list.
 - `l` on a team lead's row unfolds its teammates so `j`/`k` walk them; `h` on
   one of them folds the team back up. `h`/`l` are already one level out and one
   level in — session mode is the level above panes — and on these two kinds of

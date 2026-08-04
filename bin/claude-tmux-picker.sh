@@ -113,7 +113,17 @@ printf '%s\n' "$rows" > "$ROWS_FILE"
 PENDING_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-pending.XXXXXX")"
 export PENDING_FILE
 
-trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "${TEAM_FILE:-}" "${EXPAND_FILE:-}" "${INIT_FILE:-}"' EXIT
+# Where a full-screen page (the token page, for now) leaves a pane it wants
+# jumped to. Those pages run inside fzf's execute() and so cannot exit the
+# picker themselves; they write a pane id here and abort, the `t` binding's
+# trailing transform turns that into an `abort` for the picker's own fzf,
+# and the jump happens below in the one place that knows how to do it. The
+# alternative — switching the client from inside the popup — leaves the
+# picker sitting open on top of the pane you just asked to be taken to.
+JUMP_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-jump.XXXXXX")"
+export JUMP_FILE
+
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "$JUMP_FILE" "${TEAM_FILE:-}" "${EXPAND_FILE:-}" "${INIT_FILE:-}"' EXIT
 
 # Starts with search disabled AND the input line hidden (--disabled
 # --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
@@ -167,7 +177,10 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   # only for its other job: while the search input is open, `t` has to
   # type a t. token-page.sh returns immediately in that state (it reads
   # $FZF_INPUT_STATE, which fzf exports to every child).
-  --bind "t:transform($BIN_DIR/skip-header.sh \"{n}\" tokens t)+execute($BIN_DIR/token-page.sh 1)"
+  # The trailing transform runs after the page has exited (execute() is
+  # synchronous): if the page left a pane in $JUMP_FILE, it makes this fzf
+  # abort so the jump below can happen.
+  --bind "t:transform($BIN_DIR/skip-header.sh \"{n}\" tokens t)+execute($BIN_DIR/token-page.sh 1)+transform($BIN_DIR/skip-header.sh \"{n}\" jumped)"
   # `o` opens the overview — same shape as `t`, and for the same reason.
   --bind "o:transform($BIN_DIR/skip-header.sh \"{n}\" overview o)+execute($BIN_DIR/overview-page.sh)"
   --bind "q:transform:$BIN_DIR/skip-header.sh \"{n}\" quit q"
@@ -209,52 +222,70 @@ fzf_args+=(--bind "load:transform:$BIN_DIR/skip-header.sh 0 init")
 # "'tmux display-popup …' returned 130" — cancelling isn't an error.
 chosen=$(printf '%s\n' "$rows" | fzf "${fzf_args[@]}" || true)
 
-[ -n "$chosen" ] || exit 0
-
-# Extra provider row: Enter hands off to the provider's own action, same
-# as preview did — this script still doesn't interpret the row, it just
-# routes by the "extra" marker in field 5. Runs in the foreground with the
-# popup's own TTY so a provider that prompts (e.g. "wake it up? [y/N]")
-# works normally.
-kind=$(printf '%s' "$chosen" | awk -F'\t' '{print $5}')
-
-if [ "$kind" = "extra" ]; then
-  item_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $6}')
-  if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; then
-    "$CLAUDE_TMUX_EXTRA_CMD" action "$item_id" || true
-  fi
-  exit 0
+# A pane handed over by a full-screen page (see $JUMP_FILE above) wins: the
+# picker's own fzf was aborted, so `chosen` is empty and there is no row to
+# read. Everything after this — the existence check, mark-read, the switch —
+# is the same for both routes, which is the point of routing it here.
+jump_pane=""
+if [ -n "${JUMP_FILE:-}" ] && [ -s "$JUMP_FILE" ]; then
+  jump_pane="$(cat "$JUMP_FILE")"
 fi
 
-# A "mate" row deliberately has no branch of its own: it falls through to
-# the pane jump below, which is exactly right for it. The cursor never
-# stops on one, but `/` search can still surface and select it, and when
-# it does, jumping to that pane is what pressing Enter on it should mean.
-pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
+if [ -n "$jump_pane" ]; then
+  pane_id="$jump_pane"
+else
+  [ -n "$chosen" ] || exit 0
 
-# All jumps target a pane id, never a session/window name: tmux allows
-# ':' and '.' in session names, which derail name-based target parsing,
-# while switch-client happily resolves a %pane id to its session.
-if [ -z "$pane_id" ]; then
-  # Session header row (session-select mode): jump to the session's
-  # active pane — i.e. where you last were in that session. Resolved by
-  # exact string match over list-panes for the same reason as above.
-  session=$(printf '%s' "$chosen" | awk -F'\t' '{print $3}')
-  [ -n "$session" ] || exit 0
-  pane_id=$(tmux list-panes -a \
-      -F "#{session_name}	#{window_active}#{pane_active}	#{pane_id}" 2>/dev/null \
-    | awk -F'\t' -v s="$session" '$1==s && $2=="11" { print $3; exit }')
-  if [ -z "$pane_id" ]; then
-    echo "session 已经不存在了 ($session)。"
-    sleep 1.5
+  # Extra provider row: Enter hands off to the provider's own action, same
+  # as preview did — this script still doesn't interpret the row, it just
+  # routes by the "extra" marker in field 5. Runs in the foreground with the
+  # popup's own TTY so a provider that prompts (e.g. "wake it up? [y/N]")
+  # works normally.
+  kind=$(printf '%s' "$chosen" | awk -F'\t' '{print $5}')
+
+  if [ "$kind" = "extra" ]; then
+    item_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $6}')
+    if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; then
+      "$CLAUDE_TMUX_EXTRA_CMD" action "$item_id" || true
+    fi
     exit 0
   fi
-  tmux switch-client -t "$pane_id" 2>/dev/null \
-    || tmux attach -t "$pane_id"
-  exit 0
+
+  # A "mate" row deliberately has no branch of its own: it falls through to
+  # the pane jump below, which is exactly right for it. The cursor never
+  # stops on one, but `/` search can still surface and select it, and when
+  # it does, jumping to that pane is what pressing Enter on it should mean.
+  pane_id=$(printf '%s' "$chosen" | awk -F'\t' '{print $2}')
+
+  # All jumps target a pane id, never a session/window name: tmux allows
+  # ':' and '.' in session names, which derail name-based target parsing,
+  # while switch-client happily resolves a %pane id to its session.
+  if [ -z "$pane_id" ]; then
+    # Session header row (session-select mode): jump to the session's
+    # active pane — i.e. where you last were in that session. Resolved by
+    # exact string match over list-panes for the same reason as above.
+    session=$(printf '%s' "$chosen" | awk -F'\t' '{print $3}')
+    [ -n "$session" ] || exit 0
+    pane_id=$(tmux list-panes -a \
+        -F "#{session_name}	#{window_active}#{pane_active}	#{pane_id}" 2>/dev/null \
+      | awk -F'\t' -v s="$session" '$1==s && $2=="11" { print $3; exit }')
+    if [ -z "$pane_id" ]; then
+      echo "session 已经不存在了 ($session)。"
+      sleep 1.5
+      exit 0
+    fi
+    tmux switch-client -t "$pane_id" 2>/dev/null \
+      || tmux attach -t "$pane_id"
+    exit 0
+  fi
 fi
 
-if ! tmux display-message -p -t "$pane_id" '' >/dev/null 2>&1; then
+# `has-session`, not `display-message -p -t <pane> ''` — which is what this
+# used to be, and which never once fired: for a pane id that no longer exists
+# display-message still exits 0 (measured: `%99999` returns success and an
+# empty format), so the check passed and the jump fell through to a raw tmux
+# error instead of this line.
+if ! tmux has-session -t "$pane_id" 2>/dev/null; then
   echo "pane 已经不存在了 ($pane_id)。"
   sleep 1.5
   exit 0

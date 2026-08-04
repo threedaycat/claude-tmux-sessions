@@ -1020,6 +1020,42 @@ a truncated one must not read as somebody's choice. Bounded to the top 30 rows �
 it is a file read per session, and the tail of the ranking is not what anybody is
 looking at.
 
+**Enter jumps, and a page inside `execute()` cannot do that by itself.** The
+page runs as a child of the picker's fzf, so it can neither exit the picker nor
+usefully switch the client — switching from inside the popup leaves the picker
+sitting open on top of the pane you just asked to be taken to. So the jump is a
+handoff: `bin/token-jump.sh` writes the pane id to `$JUMP_FILE` (created by the
+picker, cleaned up in its trap) and returns `abort`; the `t` binding's **trailing**
+transform runs after `execute()` returns and turns a non-empty `$JUMP_FILE` into
+an `abort` for the picker's own fzf; and the jump itself happens in the one place
+that already knew how — the picker's tail, with its existence check, its
+`mark-read`, and its `switch-client`/`select-window`/`select-pane`. Run outside
+the picker (`token-page.sh` by hand) there is no `$JUMP_FILE` and no one to hand
+to, so that path switches the client itself.
+
+**A dead row must not leave the page.** Half of a token ranking is sessions that
+have already closed — that is what the 7-day window is for — and exiting on Enter
+there would read as a jump that failed. Field 4 of a row is the pane, empty for
+those, and Enter on one swaps the footer for a warning (with the key hints still
+in it) and stays put.
+
+**`tmux display-message -p -t <pane> ''` is not a liveness check**, which three
+scripts here believed for months. For a pane id that no longer exists it exits 0
+and prints an empty format — measured with `%99999` — so every "pane 已经不存在了"
+guard in this repo was dead code, and a stale pane fell through to a raw tmux
+error instead. `tmux has-session -t <pane>` does the right thing (exit 1,
+`can't find pane: %99999`). It resolves an *empty* target to the current pane and
+exits 0, so callers still have to reject empty first.
+
+**Never let a probe run reach `switch-client`.** Verifying the jump end-to-end in
+a detached probe session moved the *real* client into the probe: a tmux command
+run from a pane whose session has no client attached resolves "the current
+client" to the most recently active client on the server, which is the one in
+front of the person running the test. Nothing was lost and the client was already
+back where it started, but the safe shape for this test is a stub `tmux` on
+`PATH` that logs `switch-client`/`select-window`/`select-pane` and forwards
+everything else.
+
 **What the preview says, and why the live screen is at the bottom of it.** The
 card is who the session is (name, status, elapsed, `session:window`, pane id,
 short id, cwd), what it was asked to do (its opening prompt), and where its

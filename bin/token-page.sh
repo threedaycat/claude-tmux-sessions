@@ -77,13 +77,18 @@ switch() {  # $1 = days — the three actions a window switch takes
   printf '+reload-sync(%s)+transform-header(%s)+first' "$(rows "$c")" "$(head_of "$c")"
 }
 
-FOOTER=$'\033[2m  1 今日 · 7 近 7 天 · j/k 选会话 · p 预览 · r 重新统计 · q 返回\033[0m'
+KEYS='1 今日 · 7 近 7 天 · j/k 选会话 · Enter 跳过去 · p 预览 · r 重新统计 · q 返回'
+FOOTER=$'\033[2m  '"$KEYS"$'\033[0m'
+# What Enter says when the session it is on has already closed. Built here
+# so the keys come back with it — a footer that only carried the warning
+# would take the hints away for the rest of the page's life.
+export TOKEN_FOOTER_WARN=$'  \033[33m⚠ 这个会话已经不在 tmux 里了,跳不过去\033[0m  \033[2m'"$KEYS"$'\033[0m'
 
 # --disabled --no-input: no search box, so letters are inert unless bound —
 # the same navigation model as the picker, and it means a stray keypress
-# can't drop you out of the page by accident. Enter aborts rather than
-# accepts: these rows are not choices, and accept would print the selected
-# row onto a stdout that belongs to the picker's screen.
+# can't drop you out of the page by accident. Enter goes through
+# token-jump.sh rather than fzf's `accept`, because a row here is a jump
+# target and not all of them are reachable — see that script.
 #
 # Deliberately no --height: fzf then runs full-screen on the alternate
 # buffer, so leaving the page restores the picker's screen underneath
@@ -101,6 +106,7 @@ fzf --ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input \
   --bind "7:$(switch 7)" \
   --bind "r:execute-silent(python3 $(printf '%q' "$REPORT") --scan --force --cache {3})+reload-sync(python3 $(printf '%q' "$REPORT") --rows --cache {3} --width $list_w)+transform-header(python3 $(printf '%q' "$REPORT") --overview --cache {3} --width $list_w)" \
   --bind "p:toggle-preview" \
-  --bind "enter:abort" --bind "q:abort" \
+  --bind "enter:transform($BIN_DIR/token-jump.sh {4})" \
+  --bind "q:abort" \
   < <("${PY[@]}" --rows --cache "$CACHE_DIR/$days.json" --width "$list_w") \
   >/dev/null || true

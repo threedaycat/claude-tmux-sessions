@@ -451,6 +451,19 @@ case "$dir" in
     echo "ignore"
     exit 0
     ;;
+  jumped)
+    # Runs right after a full-screen page closes. The page cannot exit the
+    # picker from inside execute(), so it leaves a pane id in $JUMP_FILE and
+    # this turns that into the abort that lets claude-tmux-picker.sh do the
+    # jump. Nothing there means the page was simply closed, and the list
+    # carries on exactly as it was.
+    if [ -n "${JUMP_FILE:-}" ] && [ -s "$JUMP_FILE" ]; then
+      echo "abort"
+    else
+      echo "ignore"
+    fi
+    exit 0
+    ;;
   preview)
     # Collapse the preview entirely so the list gets the full width — with
     # a dozen-plus panes, scanning names/cwds beats seeing one pane's
