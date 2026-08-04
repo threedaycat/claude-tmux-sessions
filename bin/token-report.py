@@ -466,9 +466,10 @@ def render_rows(data, width, tag=""):
     Tab-separated: field 1 is what you see, field 2 is the session id the
     preview needs, field 3 is `tag` — the cache file this list was built
     from, so the preview and the refresh key can find it without the page
-    having to keep the current window in a state file. Every session in the
-    window gets a row: the list scrolls, so the old "还有 N 个会话未显示"
-    footnote has nothing left to say."""
+    having to keep the current window in a state file — and field 4 is the
+    pane to jump to, empty for a session that is no longer open anywhere.
+    Every session in the window gets a row: the list scrolls, so the old
+    "还有 N 个会话未显示" footnote has nothing left to say."""
     name_w, proj_w = row_widths(width)
     m = sd()
     try:
@@ -500,7 +501,13 @@ def render_rows(data, width, tag=""):
                 f"{pad('{:,}'.format(s['turns']), 5, right=True)} "
                 f"{pad(fmt_tok(s['read']), 6, right=True)} "
                 f"{YELLOW}{pad(fmt_tok(avg), 6, right=True)}{RESET}")
-        out.append(f"{disp}\t{s['sid']}\t{tag}")
+        pane = s.get("pane") or ""
+        if not (e and not e.get("archived")):
+            # Archived, or never seen by the hooks: the pane id in the cache
+            # may still be live but it is not this session's any more, and
+            # Enter must not send you somewhere else's screen.
+            pane = ""
+        out.append(f"{disp}\t{s['sid']}\t{tag}\t{pane}")
     return "\n".join(out)
 
 
