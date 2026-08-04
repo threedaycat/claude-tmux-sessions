@@ -181,8 +181,9 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   # synchronous): if the page left a pane in $JUMP_FILE, it makes this fzf
   # abort so the jump below can happen.
   --bind "t:transform($BIN_DIR/skip-header.sh \"{n}\" tokens t)+execute($BIN_DIR/token-page.sh 1)+transform($BIN_DIR/skip-header.sh \"{n}\" jumped)"
-  # `o` opens the overview — same shape as `t`, and for the same reason.
-  --bind "o:transform($BIN_DIR/skip-header.sh \"{n}\" overview o)+execute($BIN_DIR/overview-page.sh)"
+  # `o` opens the overview — same shape as `t`, and for the same reason,
+  # including the trailing transform that turns a queued jump into an abort.
+  --bind "o:transform($BIN_DIR/skip-header.sh \"{n}\" overview o)+execute($BIN_DIR/overview-page.sh)+transform($BIN_DIR/skip-header.sh \"{n}\" jumped)"
   --bind "q:transform:$BIN_DIR/skip-header.sh \"{n}\" quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh \"{n}\" esc"
   --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh \"{n}\" archive"

@@ -74,20 +74,26 @@ head_of() { # $1 = cache file
 switch() {  # $1 = days — the three actions a window switch takes
   local c="$CACHE_DIR/$1.json"
   printf 'execute-silent(python3 %q --scan --days %s --cache %q)' "$REPORT" "$1" "$c"
-  printf '+reload-sync(%s)+transform-header(%s)+first' "$(rows "$c")" "$(head_of "$c")"
+  printf '+reload-sync(%s)+transform-header(%s)+first%s' \
+    "$(rows "$c")" "$(head_of "$c")" "$CLEAR_WARN"
 }
 
 KEYS='1 今日 · 7 近 7 天 · j/k 选会话 · Enter 跳过去 · p 预览 · r 重新统计 · q 返回'
 FOOTER=$'\033[2m  '"$KEYS"$'\033[0m'
-# What Enter says when the session it is on has already closed. Built here
-# so the keys come back with it — a footer that only carried the warning
-# would take the hints away for the rest of the page's life.
-export TOKEN_FOOTER_WARN=$'  \033[33m⚠ 这个会话已经不在 tmux 里了,跳不过去\033[0m  \033[2m'"$KEYS"$'\033[0m'
+# What Enter says when the session it is on has already closed. The keys come
+# back with it — a footer that only carried the warning would take the hints
+# away for the rest of the page's life. On disk because jump-handoff.sh feeds
+# it to fzf through `transform-footer(cat …)`; see that script.
+printf '%s\n' "$FOOTER" > "$CACHE_DIR/footer"
+printf '%s\n' $'  \033[33m⚠ 这个会话已经不在 tmux 里了,跳不过去\033[0m'"$FOOTER" \
+  > "$CACHE_DIR/footer.warn"
+export JUMP_WARN_FILE="$CACHE_DIR/footer.warn"
+CLEAR_WARN="+transform-footer(cat $(printf '%q' "$CACHE_DIR/footer"))"
 
 # --disabled --no-input: no search box, so letters are inert unless bound —
 # the same navigation model as the picker, and it means a stray keypress
 # can't drop you out of the page by accident. Enter goes through
-# token-jump.sh rather than fzf's `accept`, because a row here is a jump
+# jump-handoff.sh rather than fzf's `accept`, because a row here is a jump
 # target and not all of them are reachable — see that script.
 #
 # Deliberately no --height: fzf then runs full-screen on the alternate
@@ -104,9 +110,9 @@ fzf --ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input \
   --bind "1:$(switch 1)" \
   --bind "t:$(switch 1)" \
   --bind "7:$(switch 7)" \
-  --bind "r:execute-silent(python3 $(printf '%q' "$REPORT") --scan --force --cache {3})+reload-sync(python3 $(printf '%q' "$REPORT") --rows --cache {3} --width $list_w)+transform-header(python3 $(printf '%q' "$REPORT") --overview --cache {3} --width $list_w)" \
+  --bind "r:execute-silent(python3 $(printf '%q' "$REPORT") --scan --force --cache {3})+reload-sync(python3 $(printf '%q' "$REPORT") --rows --cache {3} --width $list_w)+transform-header(python3 $(printf '%q' "$REPORT") --overview --cache {3} --width $list_w)$CLEAR_WARN" \
   --bind "p:toggle-preview" \
-  --bind "enter:transform($BIN_DIR/token-jump.sh {4})" \
+  --bind "enter:transform($BIN_DIR/jump-handoff.sh {4})" \
   --bind "q:abort" \
   < <("${PY[@]}" --rows --cache "$CACHE_DIR/$days.json" --width "$list_w") \
   >/dev/null || true

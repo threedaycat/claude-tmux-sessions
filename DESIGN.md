@@ -865,11 +865,51 @@ the reading to you. That is the right shape for *going somewhere* and the
 wrong shape for the question you have when you sit back down, which is not
 "where is pane 12" but **"what happened while I was away"**.
 
-`o` answers it in the order you ask it: does anything need me (⏸ WAIT first,
-then unread ✔ DONE, longest-waiting first), what is still working (▶ RUN),
-how are the teams doing (roster, task counts, and each member's own pane
-state joined in by pane id). Then the resource half — 5h quota, 7-day
-window, today's tokens by model, the 14-day sparkline.
+`o` answers it as **one card per tmux session**, ordered by urgency: the
+session holding the longest-waiting pane comes first, and inside a card the
+panes are ordered the same way (⏸ WAIT, then unread ✔ DONE, then ▶ RUN, then
+the quiet ones). The resource half — 5h quota, 7-day window, today's tokens
+by model, the 14-day sparkline — is pinned in fzf's footer, where it stays
+while you walk the cards.
+
+**Cards by session, not blocks by state.** The first version grouped panes
+into a `等你` block and a `在跑` block. That answered "what needs me" and then
+left you to work out where those panes actually were — and it split a session
+in half whenever one of its panes finished. A session is a place you go, so
+it is the unit worth drawing a box around; urgency lives in the *order* of
+the boxes instead, which loses nothing, because the top of the page is still
+whatever needs you most. Session order here is therefore the opposite choice
+from the picker's list, where it is tmux's own creation order specifically so
+the list doesn't reshuffle under you while you work: this screen is read once,
+on arrival, and then acted on.
+
+**A card title's chips are only the three states that mean something** — ⏸ / ✔
+/ ▶ — with everything quiet collapsed into a dim `+6 安静`. Aged-out DONE and
+READ both draw with a tick, so listing them as chips put the same glyph on the
+line twice, distinguishable only by intensity, hiding exactly the distinction
+(unread vs already-seen) that must not need a second look.
+
+**The rows are selectable and Enter jumps.** A pane row jumps to its pane; a
+card title jumps to that session's active pane — where you last were in it.
+Two kinds of row have nothing to jump to: the blank line between cards, and a
+teammate the roster knows about that has no pane (or a pane nothing is
+tracking). Those keep an empty jump field, and Enter on one puts a warning in
+the footer instead of leaving the page. **Listing them at all is the point** —
+the picker's list can't, because every row there is a jump target and one that
+silently swallowed Enter would be worse than not listing it. This page can,
+because here Enter can explain itself.
+
+**The preview is state, not screen.** The picker's own preview is the live
+screen; a second copy of it here would say nothing new. So a pane's card
+answers what a screen dump can't: where it is, how long it has been in this
+state, how full its context is (`ctx_bar`, the same meter as the statusline),
+which team owns it and what that member is on, what it has read in today, and
+its opening prompt. A session's card is the same question one level up —
+per-state counts, which windows it spans, its most urgent pane, the teams
+running in it, and a per-pane 读入 column the list has no room for. The 今日
+figures come from a `token-report.py` cache warmed in the background, so a
+card drawn in the first half-second simply has no 今日 line rather than
+waiting for one.
 
 **The greeting line is the whole point.** It states the number that decides
 what you do next — `5 个有结果等你看` — and states the good case out loud
@@ -899,12 +939,20 @@ than the label, so the age phrasing follows automatically.
 `session-digest`'s own preview keeps IDLE separate because there the subject
 is one pane in detail.
 
-**It renders once and waits.** There is nothing to switch, so no keypress
-re-runs anything: `r` refreshes on purpose and every other key leaves. That
-matters because the halves are not equally cheap — the pane half is ~0.06s
-(one status file, one `tmux list-panes`, one roster read) while the footer
-reads transcripts and costs ~0.5s. Nothing is marked read: looking at the
-bridge is not visiting a pane.
+**What each part costs, which is why the page is shaped this way.** The cards
+are ~0.05s (one status file, one `tmux list-panes`, one roster read), so `r`
+can rebuild rows, greeting and footer freely. A card preview adds a transcript
+tail read. The quota block costs ~0.5s and is computed **once**, at open: `r`
+is about the panes, and none of the keys change the quota. The token cache is
+warmed in the background and nothing waits on it. Nothing is marked read:
+looking at the bridge is not visiting a pane.
+
+**Footers are swapped through `transform-footer(cat FILE)`, never inlined.**
+fzf parses an action's argument by matching parentheses, and this page's footer
+carries the sparkline line `峰值 9.1M (07-31)`. Balanced brackets happen to
+survive, but the first unbalanced one in whatever the quota block prints would
+silently truncate the action — so both versions of the footer (clean, and with
+the Enter warning) are written to disk and the actions only ever `cat` them.
 
 ## The token page (`t`)
 
@@ -1024,7 +1072,7 @@ looking at.
 page runs as a child of the picker's fzf, so it can neither exit the picker nor
 usefully switch the client — switching from inside the popup leaves the picker
 sitting open on top of the pane you just asked to be taken to. So the jump is a
-handoff: `bin/token-jump.sh` writes the pane id to `$JUMP_FILE` (created by the
+handoff: `bin/jump-handoff.sh` writes the pane id to `$JUMP_FILE` (created by the
 picker, cleaned up in its trap) and returns `abort`; the `t` binding's **trailing**
 transform runs after `execute()` returns and turns a non-empty `$JUMP_FILE` into
 an `abort` for the picker's own fzf; and the jump itself happens in the one place
