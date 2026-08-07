@@ -7,6 +7,11 @@
 # header), right switches back to pane mode (cursor snaps to the nearest
 # pane row). The current mode lives in $MODE_FILE, created/exported by
 # claude-tmux-picker.sh for this picker instance.
+#
+# h/l are one level out/in, and on two kinds of row that means something
+# more specific: `l` on a team lead unfolds its teammates so j/k can walk
+# them, `h` on one of them folds the team again. Which lead is unfolded
+# lives in $EXPAND_FILE, one row index; see the block that reads it.
 # args: $1 = current 0-based item index ({n}),
 #       $2 = direction (up/down/init/left/right/slash/preview/tokens/
 #            showall/digit/quit/esc)
@@ -89,18 +94,41 @@ fi
 # otherwise be the only sign anything was wrong. It is also the version
 # without `f`, which is correct: no picker instance means no team state to
 # filter.
-PANE_HEADER="${PANE_HEADER:-j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出}"
+PANE_HEADER="${PANE_HEADER:-o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出}"
 SESSION_HEADER='j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
 SEARCH_HEADER='输入过滤 · Enter 跳转 · Esc 返回 j/k 导航'
 # Shown when `f` had nothing to narrow to, or when the rows it was showing
 # went away. No parentheses in this string: fzf parses `change-header(…)`
 # by matching them, so one here would truncate the header at that point.
 TEAM_EMPTY_HEADER='编队里没有可跳转的 pane · 已显示完整列表 · j/k 浏览 · q 退出'
+# Shown while one lead's team is unfolded — the only state in which j/k
+# walks teammates. Same no-parentheses rule as above.
+TEAM_OPEN_HEADER='j/k 选队员 · h 收起 · Enter 跳到该队员 · / 搜索 · q 退出'
 
 mode="pane"
 if [ -n "${MODE_FILE:-}" ] && [ -s "$MODE_FILE" ]; then
   mode="$(cat "$MODE_FILE")"
 fi
+
+# Which lead's team is unfolded, as a row index (empty = none). `l` on a
+# lead row sets it, `h` on one of its teammates clears it, and so does
+# anything that takes the cursor out of that team or rebuilds the list.
+#
+# One row index is the whole state, because list-rows.sh emits a team's
+# members directly below their lead: the teammates *are* the contiguous run
+# of `mate` rows under that index. Nothing here needs to know agent ids or
+# which pane leads which — and nothing has to stay in sync with the roster.
+expanded=""
+if [ -n "${EXPAND_FILE:-}" ] && [ -s "$EXPAND_FILE" ]; then
+  expanded="$(cat "$EXPAND_FILE")"
+fi
+
+fold_team() {
+  expanded=""
+  if [ -n "${EXPAND_FILE:-}" ]; then
+    : > "$EXPAND_FILE" 2>/dev/null || true
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # The rows, and where the cursor may stop in them.
@@ -121,6 +149,7 @@ TOTAL=0
 HEADER_POS=""
 PANE_POS=""
 EXTRA_POS=""
+MATE_POS=""
 _rows_loaded=0
 
 load_rows() {
@@ -142,6 +171,7 @@ load_rows() {
     HEADER_POS=",,"
     PANE_POS=",,"
     EXTRA_POS=",,"
+    MATE_POS=",,"
     _rows_loaded=1
     return 0
   fi
@@ -164,6 +194,9 @@ load_rows() {
   # the whole point of that mode.
   PANE_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($2 != "" && $5 != "mate") print NR }' | paste -sd, -),"
   EXTRA_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($5 == "extra") print NR }' | paste -sd, -),"
+  # Teammates as their own set: `l`/`h` walk into and out of a team, so the
+  # rows that are *not* cursor stops still have to be locatable.
+  MATE_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($5 == "mate") print NR }' | paste -sd, -),"
   _rows_loaded=1
 }
 
@@ -243,6 +276,14 @@ empty_header() {
   printf '%s' "$bits"
 }
 
+# $1 = the row the cursor is landing on, when the caller knows it. Passing it
+# is what earns the `l 展开队员` hint: the pane header is already 115 columns
+# and the list side of a split picker is around 79, so it arrives truncated —
+# a permanent thirteenth entry would only push an existing one off the end.
+# Advertised on the rows where it does something instead, which is also where
+# you would look for it. Callers that have no row (the digit handler, which
+# runs before the row predicates are defined) pass nothing and get the plain
+# header; the next cursor move fills the hint in.
 mode_header() {
   # Derived, never remembered. Every cursor move re-sends this, so anything
   # latched instead of computed would be wiped by the next `j` — which fires
@@ -253,6 +294,16 @@ mode_header() {
     empty_header
   elif [ "$mode" = "session" ]; then
     printf '%s' "$SESSION_HEADER"
+  elif [ -n "$expanded" ]; then
+    printf '%s' "$TEAM_OPEN_HEADER"
+  elif [ -n "${1:-}" ] && [ -n "${EXPAND_FILE:-}" ] \
+       && is_pane "$1" && is_mate "$(( $1 + 1 ))"; then
+    # In front, not appended: the header is cut off around column 78 on the
+    # list side of a split picker, so anything added at the end is never on
+    # screen. A hint you cannot see is not a hint. On a lead row `l` is also
+    # the most interesting key there is, which makes the front the honest
+    # place for it rather than merely the visible one.
+    printf '%s · %s' 'l 展开队员' "$PANE_HEADER"
   else
     printf '%s' "$PANE_HEADER"
   fi
@@ -307,6 +358,19 @@ old_pane="" old_session="" old_num=""
 remember_cursor() {
   [ -n "${ROWS_FILE:-}" ] && [ -s "$ROWS_FILE" ] || return 0
   local n=$(( cur + 1 ))
+  # Sitting on an unfolded teammate: remember its lead instead. Every caller
+  # of this rebuilds the list, and a rebuild folds the team back up — so the
+  # teammate is about to stop being a row the cursor may sit on, and the lead
+  # is exactly the row it folds into. Without this the pane-id match below
+  # would find the teammate and pos() straight back onto it, parking the
+  # cursor somewhere j/k can no longer move from.
+  #
+  # Under `f` this never fires: that mode omits the marker, teammates are
+  # ordinary rows there, and staying on one is correct.
+  while [ "$n" -gt 1 ] \
+    && [ "$(awk -F'\t' -v n="$n" 'NR == n { print $5 }' "$ROWS_FILE")" = "mate" ]; do
+    n=$(( n - 1 ))
+  done
   old_pane=$(awk -F'\t' -v n="$n" 'NR == n { print $2 }' "$ROWS_FILE")
   old_session=$(awk -F'\t' -v n="$n" 'NR == n { print $3 }' "$ROWS_FILE")
   old_num=$(awk -F'\t' -v n="$n" 'NR == n { print $4 }' "$ROWS_FILE")
@@ -353,6 +417,11 @@ remember_cursor() {
 # rebuild, say so.
 FILTER_DROPPED=0
 rebuild_rows() {
+  # Any rebuild folds an unfolded team: the unfold is a single row index, and
+  # a rebuilt list renumbers everything under it. Keeping the index would
+  # point it at whatever row now happens to sit there. Done here, on the one
+  # path every list-changing key goes through, rather than in each branch.
+  fold_team
   "$BIN_DIR/list-rows.sh" > "$ROWS_FILE"
   # Before any early return: whatever was loaded describes the old list.
   invalidate_rows
@@ -419,12 +488,26 @@ reload_keeping_place() {
   # happened, because a rebuild is precisely when the answer can change:
   # collapse the last two readable panes with `a` and the list still has
   # rows but no longer has a stop. Nothing else would re-derive it until the
-  # next cursor move, and in that state the cursor cannot move.
+  # next cursor move, and in that state the cursor cannot move. The same
+  # applies to an open team: `a` while sitting on a teammate folds it, and
+  # leaving `h 收起` on screen would advertise a key with nothing to close.
   #
   # A state outranks an event when both apply. `f` dropping its filter is
   # worth saying, but if what came back still has nowhere to stand then the
   # way out matters more than the explanation — and the explanation would be
-  # wiped by the next keypress anyway, while the state would not.
+  # wiped by the next keypress anyway, while the state would not. The three
+  # are mutually exclusive on purpose: fzf applies actions in order, so a
+  # second change-header would overwrite whichever one went up first.
+  #
+  # No row is passed to mode_header, deliberately: this function runs from the
+  # key branches *above* the row predicates, where is_pane/is_mate do not exist
+  # yet — and a call to a not-yet-defined function inside a condition just
+  # fails quietly, which is how the row-aware form silently never fired here.
+  # It would be wrong even if it worked: the predicates are built from the rows
+  # this function has just replaced, so they answer about the old list while
+  # $pos indexes the new one. The plain mode header is the right answer anyway,
+  # since the rebuild folded any open team; the `l` hint comes back on the next
+  # cursor move.
   local hdr
   if [ "$(stops_here)" -eq 0 ]; then
     hdr="$(empty_header)"
@@ -542,16 +625,29 @@ case "$dir" in
     reload_keeping_place after
     exit 0
     ;;
-  tokens)
-    # `t`. The page itself is opened by an execute() bound directly on the
+  tokens|overview)
+    # `t` and `o`. The page itself is opened by an execute() bound directly on the
     # key in claude-tmux-picker.sh — an execute printed from here would be
     # discarded, since transform output is parsed as a --listen payload
     # and that parser treats execute as remote code execution. All this
-    # branch still owns is the search-mode case, handled above (`put(t)`);
-    # in navigation mode there is nothing left to change about the list.
+    # branch still owns is the search-mode case, handled above (`put(t)` /
+    # `put(o)`); in navigation mode there is nothing to change about the list.
     # The page needs no cursor carrying: it doesn't reload anything, so
     # fzf redraws the list exactly as it was.
     echo "ignore"
+    exit 0
+    ;;
+  jumped)
+    # Runs right after a full-screen page closes. The page cannot exit the
+    # picker from inside execute(), so it leaves a pane id in $JUMP_FILE and
+    # this turns that into the abort that lets claude-tmux-picker.sh do the
+    # jump. Nothing there means the page was simply closed, and the list
+    # carries on exactly as it was.
+    if [ -n "${JUMP_FILE:-}" ] && [ -s "$JUMP_FILE" ]; then
+      echo "abort"
+    else
+      echo "ignore"
+    fi
     exit 0
     ;;
   preview)
@@ -595,6 +691,16 @@ load_rows
 # by any non-digit key (top of script) and once a jump fires. In search
 # mode this never runs — the top block types the digit into the query.
 if [ "$dir" = "digit" ]; then
+  # A numbered row is never a teammate — they are given no number at all —
+  # so any digit jump lands outside an unfolded team. Fold it here rather
+  # than leaving it to the next cursor move: the actions below carry no
+  # header of their own, and a header still advertising `h 收起` after the
+  # cursor has left the team is worse than one extra line redraw.
+  hdr=""
+  if [ -n "$expanded" ]; then
+    fold_team
+    hdr="change-header($(mode_header))+"
+  fi
   pend=""
   [ -n "${PENDING_FILE:-}" ] && [ -s "$PENDING_FILE" ] && pend="$(cat "$PENDING_FILE")"
   n=$((10#${pend}${key}))                       # digits so far, as a number
@@ -615,12 +721,12 @@ if [ "$dir" = "digit" ]; then
     # if it doesn't (its own row is collapsed, e.g. 1 while only 10-15 show)
     # just wait — dropping the prefix here would make 12 unreachable.
     if [ -n "${PENDING_FILE:-}" ]; then printf '%s' "$n" > "$PENDING_FILE"; fi
-    if [ -n "$line" ]; then echo "pos($line)"; else echo "ignore"; fi
+    if [ -n "$line" ]; then echo "${hdr}pos($line)"; else echo "${hdr}ignore"; fi
   elif [ "$n" -ge 1 ] && [ -n "$line" ]; then
     if [ -n "${PENDING_FILE:-}" ]; then : > "$PENDING_FILE" 2>/dev/null || true; fi
-    echo "pos($line)+accept"                    # can't be extended — jump now
+    echo "${hdr}pos($line)+accept"              # can't be extended — jump now
   else
-    echo "ignore"                                # 0, or out of range — keep any pending prefix
+    echo "${hdr}ignore"                          # 0, or out of range — keep any pending prefix
   fi
   exit 0
 fi
@@ -637,6 +743,33 @@ is_extra() {
   [[ "$EXTRA_POS" == *",$1,"* ]]
 }
 
+is_mate() {
+  [[ "$MATE_POS" == *",$1,"* ]]
+}
+
+# The unfolded team as a range: the run of `mate` rows directly below the
+# remembered lead. Empty range (LO > HI) when nothing is unfolded, so
+# is_open_mate is false everywhere without a special case.
+OPEN_LO=1
+OPEN_HI=0
+if [ -n "$expanded" ]; then
+  OPEN_LO=$(( expanded + 1 ))
+  OPEN_HI=$(( OPEN_LO - 1 ))
+  i="$OPEN_LO"
+  while is_mate "$i"; do
+    OPEN_HI="$i"
+    i=$(( i + 1 ))
+  done
+  # The lead has no teammates below it any more — its team exited, or the
+  # rows moved under a keypress that did not go through rebuild_rows. Fold,
+  # so the header stops advertising a way back out of nowhere.
+  [ "$OPEN_HI" -lt "$OPEN_LO" ] && fold_team
+fi
+
+is_open_mate() {
+  [ "$1" -ge "$OPEN_LO" ] && [ "$1" -le "$OPEN_HI" ]
+}
+
 # Is position $1 a valid stop in the current mode?
 # `init` is narrower on purpose: with extra provider rows sorted first,
 # landing on "wherever the cursor starts" would land on an extra row
@@ -649,11 +782,37 @@ is_stop() {
   elif [ "$dir" = "init" ]; then
     is_pane "$1"
   else
-    is_pane "$1" || is_extra "$1"
+    is_pane "$1" || is_extra "$1" || is_open_mate "$1"
   fi
 }
 
 orig=$(( cur + 1 ))  # 1-based current position; fallback if no valid target found
+
+# `l` on a lead unfolds its team, `h` on one of its teammates folds it back —
+# h/l as one level out/in, which is what they already mean everywhere else
+# here (session mode is the level above panes). Handled before the generic
+# mode switch below, and only on these two kinds of row: on every other row
+# h/l still switch cursor mode exactly as they did.
+#
+# Unfolding needs $EXPAND_FILE, because it is what makes the teammates
+# reachable on the *next* keypress — every keypress is a separate process.
+# Without it (standalone/debug) pos() would park the cursor on a row j/k
+# cannot move from, so the key falls through to the plain mode switch.
+if [ "$dir" = "right" ] && [ -n "${EXPAND_FILE:-}" ] \
+   && is_pane "$orig" && is_mate "$(( orig + 1 ))"; then
+  printf '%s' "$orig" > "$EXPAND_FILE"
+  expanded="$orig"
+  echo "change-header($TEAM_OPEN_HEADER)+pos($(( orig + 1 )))"
+  exit 0
+fi
+if [ "$dir" = "left" ] && [ -n "$expanded" ] && is_open_mate "$orig"; then
+  lead="$expanded"
+  fold_team
+  # Back on the lead, so the header offers `l` again — folding and unfolding
+  # the same team is one key each way, with the way back always on screen.
+  echo "change-header($(mode_header "$lead"))+pos($lead)"
+  exit 0
+fi
 
 case "$dir" in
   down)
@@ -720,15 +879,27 @@ if [ "$idx" -lt 1 ] || [ "$idx" -gt "$TOTAL" ] || ! is_stop "$idx"; then
   idx="$orig"
 fi
 
-# One branch, for every direction. The mode switches used to name their own
-# header, which was fine while a mode had exactly one — but a mode's header
-# now depends on whether that mode has anywhere to stand, and `mode` already
-# holds the new value by this point, so `mode_header` answers for the mode
-# being switched *to*. Naming the string here instead meant `h` on an empty
-# list swapped one set of dead keys for a different set of dead keys.
+# Walking out of an unfolded team folds it again — the unfold is a local
+# excursion, not a mode you have to remember you are in. The lead itself
+# counts as inside, so `k` off the first teammate onto its lead keeps the
+# team open and one more `k` closes it on the way past. The header follows
+# for free: mode_header is consulted below, after this.
+if [ -n "$expanded" ] \
+   && { [ "$idx" -lt "$expanded" ] || [ "$idx" -gt "$OPEN_HI" ]; }; then
+  fold_team
+fi
+
+# One emit for every direction, through mode_header, rather than the literal
+# per-key headers this used to send. Two separate reasons converged on that:
+# a mode's header now depends on whether that mode has anywhere to stand, and
+# it is also the only thing that knows about an unfolded team. `left`/`right`
+# have already set $mode by this point, so mode_header answers for the mode
+# being switched *to*. Naming a string here meant `h` on an empty list swapped
+# one set of dead keys for a different set, and `right` sending $PANE_HEADER
+# literally went out folded while a team was still open.
 #
-# The header goes out with every cursor move, not just the switches. It is
-# usually the same string already showing, so it costs a redraw of one line
-# — and it is how both the `f` notice and a stale empty-state header clear
-# themselves without a second piece of per-instance state to remember them by.
-echo "change-header($(mode_header))+pos($idx)"
+# It goes out with every cursor move, not just the switches — usually the same
+# string already showing, so it costs a redraw of one line, and it is how both
+# the `f` notice and a stale empty-state header clear themselves without a
+# second piece of per-instance state to remember them by.
+echo "change-header($(mode_header "$idx"))+pos($idx)"

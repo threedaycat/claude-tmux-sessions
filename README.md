@@ -164,7 +164,7 @@ which renders the quota bar, a WAIT badge only while something's blocked, then
 counts of unread-done and running:
 
 <p align="center">
-  <img src="docs/statusbar.png" alt="Status line segment: 5h quota bar at 32%, a red WAIT badge for deploy-script, then 2 done-unread and 1 running" width="700">
+  <img src="docs/statusbar.png" alt="Status line segment: 5h quota bar at 32%, a red WAIT badge for deploy-script waiting 12s, then 5 done-unread and 3 running" width="700">
 </p>
 
 ### Check it's working
@@ -205,9 +205,38 @@ Then remove the four `tmux_status_update.py` hook entries from
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
   `50` — an even split, so the preview is about as wide as the pane it's
   showing) to change it.
+- `o` opens the overview: one screen for "I'm back — what's the situation".
+  **The first line is the answer** — `5 个有结果等你看`, or `没人等你 · 2 个还在跑`.
+  Below it, **one card per tmux session**, most urgent session first, each
+  titled with what it holds (`✔ 3  ▶ 1  +6 安静`) and the team running in it.
+  The 5h quota, the 7-day window, today's tokens and the 14-day sparkline sit
+  pinned at the bottom while you walk the cards. `j`/`k` move, `Enter` jumps
+  (a pane row to its pane, a card title to where you last were in that
+  session), `r` refreshes, `q` returns. The preview is **state, not screen** —
+  the list already shows you screens: where this pane is, how long it's been
+  there, how full its context is, which team owns it, what it's read in today.
+  Read-only: looking at it marks nothing read.
+- `t` opens the token page: an overview of the window (turns, and the four token
+  classes as share bars) above a **per-session ranking you can walk**. It sorts
+  by **tokens read in** and highlights **mean context per turn**, because cost is
+  roughly turns × the context each turn carried and ~98% of the tokens are
+  re-reads of existing context — so turn count alone misjudges which session is
+  expensive. Sessions are listed by name, not by id — whatever you or your team
+  called them, falling back to the session's opening question for ones that never
+  got a name. `j`/`k` move and the preview shows that session in full: what it
+  was asked to do, where its tokens went, a per-day sparkline, and its live
+  screen if it's still open (the tail of its last reply if it isn't). `Enter`
+  takes you to that session's pane; on one that has already closed it says so
+  and stays put. `1` / `7` switch between today and the last 7 days, `p`
+  collapses the preview, `r` recounts, `q` returns to the list.
+- `l` on a team lead's row unfolds its teammates so `j`/`k` walk them; `h` on
+  one of them folds the team back up. `h`/`l` are already one level out and one
+  level in — session mode is the level above panes — and on these two kinds of
+  row they just mean one level further. On every other row they do exactly what
+  they always did. See below.
 - `f` narrows the list to your Agent Teams and the panes on them — only live
-  when you actually have a team, and the way to put the cursor on a teammate.
-  See below.
+  when you actually have a team. `l` is the small version of it: `f` answers
+  *who is on which team*, `l` answers *who is on this one*. See below.
 - `Enter` jumps · `ctrl-x` archives the highlighted pane · `q` / `Esc` closes.
 
 ### Agent Teams
@@ -221,11 +250,17 @@ gives you a two-part preview: the full roster and shared task list on top —
 including the members that have no pane to jump to — then the session's own
 panes below.
 
-Teammate rows are indented under their lead and are shown rather than
-selected: `j`/`k` step over them and they have no jump number, so a team costs
-one stop in the list instead of one per member. The lead is the useful
+Teammate rows are indented under their lead and are, by default, shown rather
+than selected: `j`/`k` step over them and they have no jump number, so a team
+costs one stop in the list instead of one per member. The lead is the useful
 destination anyway — its teammates are in the same tmux window, a native
-pane-switch away. Press `f` when you do want to move among them directly.
+pane-switch away.
+
+When you do want to move among them, press `l` on the lead: that one team's
+members become stops, `j`/`k` walk them, and `h` folds it back. It is an
+excursion rather than a mode to remember you are in — walking out of the team
+folds it again, and so does rebuilding the list (`a` / `f` / `ctrl-x`) or
+jumping away by number. Use `f` to see every team at once.
 
 The name is printed in the colour Claude Code assigned that teammate, so
 saying "this pane is on a team" costs the list no columns at all — the name

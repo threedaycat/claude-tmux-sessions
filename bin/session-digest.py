@@ -243,16 +243,22 @@ def first_prompt(path):
     return None
 
 
-def transcript_info(entry, want_text=True):
+def transcript_info(entry, want_text=True, path=None):
     """(model, context_tokens, recap_text, task) from the pane's
     transcript, or all-None if it can't be found/parsed. want_text=False
     is the cheap path for the one-line pane bar: a small tail read, stop
     at the first usage-bearing message, skip recap/first-prompt entirely
-    (~10x less I/O — the preview runs on every cursor stop)."""
-    sid, cwd = entry.get("session_id"), entry.get("cwd")
-    if not sid or not cwd:
-        return None, None, None, None
-    path = os.path.join(PROJECTS_DIR, cwd.replace("/", "-"), sid + ".jsonl")
+    (~10x less I/O — the preview runs on every cursor stop).
+
+    `path` short-circuits the sid+cwd lookup for callers that already hold
+    the transcript's real filename — token-report.py found its files by
+    globbing, and reconstructing the path from the `cwd` recorded *inside*
+    one would miss any session that has since moved directories."""
+    if path is None:
+        sid, cwd = entry.get("session_id"), entry.get("cwd")
+        if not sid or not cwd:
+            return None, None, None, None
+        path = os.path.join(PROJECTS_DIR, cwd.replace("/", "-"), sid + ".jsonl")
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)
