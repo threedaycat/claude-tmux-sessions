@@ -707,25 +707,71 @@ team", **dropped the lead's row entirely**. The team's own row. It was
 never a filter bug: the filter's question was right and the data answered
 it wrongly, so the fix is in the join, not in the filter.
 
-The lead is found **by elimination**, using the one structural fact
-available: a team is spawned by splitting the window its lead is already
-in. So the team's session is wherever its teammates turned up, and the lead
-is the tracked Claude pane in that session that is not one of them.
-`agent_teams.attach_lead()` does it, and it takes the caller's world —
-`{pane: session}` — rather than reading tmux itself, so the module stays a
-pure reader of `~/.claude/teams` and both renderers get the same answer.
+**The fix is to keep the row, not to name it.** Those are separable, and
+only the first was ever required. `agent_teams.attach_lead()` takes the
+caller's world — `{pane: session}` — rather than reading tmux itself, so the
+module stays a pure reader of `~/.claude/teams` and both renderers get the
+same answer, and all it does is this: every tracked pane in a team's session
+that is not a teammate joins `by_pane`, marked as **neither lead nor mate**
+and carrying no name. The lead is guaranteed to be among them. That is
+enough for `f` to stop dropping it.
 
-| candidates | what happens |
+**Nothing infers which one is the lead, and an earlier version's rule for
+doing so was wrong.** It crowned the candidate whenever there was exactly
+one — reading "one" as evidence, when all it means is "there is one pane
+here I cannot explain". A lead running in a different tmux session, or
+outside tmux altogether, leaves exactly one unrelated pane unexplained, and
+that pane was named `team-lead`, tagged `中枢`, and written back into the
+roster with every downstream reader believing it. The rule was unstable in
+the other direction too: opening one more unrelated Claude pane in that
+session took the count from one to two and the lead silently lost its
+identity, so the label flickered with traffic that had nothing to do with
+the team. Two teams in one session made it worse — the first team in
+alphabetical order took the only candidate.
+
+The costs are lopsided, which is what decides it:
+
+| | cost |
 |---|---|
-| exactly one | that is the lead: `is_lead`, the `中枢` tag, and the roster entry gets its pane so the preview stops saying it has none |
-| more than one | **nothing is marked as the lead.** All candidates still join `by_pane`, as neither lead nor teammate, so `f` cannot drop the real one |
-| none | the lead isn't tracked; nothing to do |
+| crowning the wrong pane | somebody else's pane is named `team-lead`, tagged, and the claim is written into the roster where no later reader can tell it from fact |
+| crowning nobody | the lead's row has no tag. **It is still in `by_pane`, still survives `f`, still keeps its number.** |
 
-The middle row is the whole design. An unrelated Claude pane sharing the
-session makes the deduction ambiguous, and the two errors are not
-symmetrical: a missing tag costs a word, while naming the wrong pane as the
-lead is a lie that reads as fact. Keeping every candidate guarantees the
-lead survives `f` without anyone having to be right about which it is.
+So the row survives and no one is crowned. `is_lead` and `中枢` are still
+produced — but only from real data, a roster whose `tmuxPaneId` is a genuine
+`%NN`. That path works and is tested; it is dead only because of what
+upstream currently writes, so **it comes alive the day that changes and must
+not be deleted for looking unused.**
+
+Two consequences, both deliberate:
+
+- **Over-inclusion is the accepted price.** An unrelated Claude pane sharing
+  the session appears under `f`. It cannot be narrowed without guessing
+  which pane is the lead, and guessing is the thing that was removed. One
+  row too many is recoverable; the wrong pane wearing the lead's name is
+  not. **Do not "tighten" this** — tightening means guessing again.
+- **The roster is never edited.** An inference must not be written into the
+  structure holding what was actually read, or nothing downstream can tell
+  the two apart. `inferred_pane` sits beside the roster's own `pane` as the
+  place a future inference would go; it is empty today and nothing consults
+  it. That separation is worth more than the inference it currently doesn't
+  hold.
+
+> **The deduction is anchored on the teammates' session, so a team with no
+> teammates has no anchor.** Such a team reaches none of the above and
+> contributes no rows at all — a boundary of the design rather than a gap in
+> it, and the reason a team directory outliving its members stays invisible
+> (see "Empty, and nowhere to stand" for what `f` does about it).
+
+One further effect worth naming rather than leaving to be discovered: the
+session-header preview decides which team boards to draw from the panes in
+that session that are in `by_pane`, so a candidate can now supply that
+answer. It changes nothing while a teammate's pane is live, because the
+teammate already supplied it. It matters only when every teammate pane has
+died but the status file has not been pruned yet: the board now renders
+where it previously would not have. That is the better answer — the team
+and its roster still exist, and the roster is the only surface that can name
+members with no pane — and it self-corrects at the next prune. (The
+selection there is per *session*, not per window, despite `win_of`'s name.)
 
 > Those extra entries are a **third kind** of thing in `by_pane`, and that
 > is why `is_mate` is a stated field rather than `not is_lead`. Derived, a
@@ -735,10 +781,12 @@ lead survives `f` without anyone having to be right about which it is.
 > shape, the naming chain's level 2, and whether the session preview gives
 > the pane a card.
 
-A lead keeps its own `pane_title` as its name rather than taking the roster
-name, in both renderers. Its roster name is its agent type, which is the
-same word on every team's lead, while its pane title is the session
-summary. Level 2 of the naming chain is therefore teammates-only.
+A lead identified from real roster data keeps its own `pane_title` as its
+name rather than taking the roster name, in both renderers. Its roster name
+is its agent type, which is the same word on every team's lead, while its
+pane title is the session summary. Level 2 of the naming chain is therefore
+teammates-only — which is also what makes an unnamed candidate fall through
+to its own title instead of borrowing somebody's.
 
 **`中枢` is a word on a row, which `队员` was not allowed to be.** The
 difference is arithmetic: `队员` was paid once per member on every row of a

@@ -388,7 +388,8 @@ def snapshot():
 
 
 def attach_lead(snap, pane_session):
-    """Find each team's lead pane, which the roster cannot name, and join it.
+    """Keep a team's lead pane in `by_pane`, without ever claiming to know
+    which pane it is.
 
     `pane_session` is `{pane_id: tmux session name}` for the Claude panes the
     caller is actually showing — its world, injected, so this module keeps
@@ -399,34 +400,59 @@ def attach_lead(snap, pane_session):
     string `"leader"`, so it joins to no pane, and `leadSessionId` is a
     session id that goes stale without being refreshed — neither is a pane.
     There is no field anywhere in the official data that names the pane a
-    lead is sitting in. Believing `tmuxPaneId` would be worse than admitting
-    that: it would match nothing at best, and something unrelated at worst.
+    lead is sitting in.
 
-    **So the lead is found by elimination, not by lookup**, using the fact
-    that a team is spawned by splitting the window its lead is already in: a
-    team's session is wherever its teammates turned up, and the lead is the
-    tracked Claude pane in that session that is not one of them. That is a
-    deduction about the world, which is why it needs the caller's world and
-    cannot live in `snapshot()`.
+    That mattered because `f` filters to "panes on a team", so the lead's own
+    row — the row a team is most about — was being dropped from the team
+    view. What has to be fixed is that the row survives. **Naming the row is
+    a separate, optional claim, and this function does not make it.**
 
-    Three outcomes, and the middle one is the point:
+    **Nothing here ever sets `is_lead`.** An earlier version did, whenever
+    exactly one pane in the team's session was unaccounted for, and that
+    reading was wrong: "one" means "there is one pane here I cannot explain",
+    which is not evidence that it is the lead. A lead running in another
+    session, or outside tmux entirely, leaves exactly one unrelated pane
+    unexplained — and it was crowned, named, tagged, and written back into
+    the roster, with every downstream reader believing it. The same rule was
+    unstable in the other direction: opening one more unrelated Claude pane
+    in that session took the count from one to two and the lead silently lost
+    its identity again, so the label flickered with traffic that had nothing
+    to do with the team.
 
-      - **exactly one candidate** — it is the lead. It joins `by_pane` with
-        `is_lead` set, and the roster entry gets its pane, so the preview can
-        stop saying the lead has none.
-      - **more than one candidate** — an unrelated Claude pane is sharing the
-        session and there is no way to tell which is which. **Nothing is
-        marked as the lead.** All of them still join `by_pane`, flagged as
-        neither lead nor teammate, because the thing that must not happen is
-        `f` dropping the lead — and the only way to guarantee that without
-        knowing which one it is, is to keep them all. A missing label costs a
-        word; naming the wrong pane as the lead is a lie that reads as fact.
-      - **no candidates** — the lead isn't among the tracked panes. Nothing
-        to do, and the existing behaviour was already right.
+    The costs are lopsided. Getting it wrong names somebody else's pane
+    `team-lead`; getting it "right" adds a word to a row that was already
+    going to be there. So every candidate is kept and none is crowned.
 
-    A team whose teammates have no tracked panes yet has no known session, so
-    it reaches none of these. That matches the row list, which cannot place
-    such a team on a session header either.
+    What remains is deliberately modest: the panes in a team's session that
+    are not teammates all enter `by_pane`, marked as neither lead nor mate,
+    carrying no name. **The lead is guaranteed to be among them, which is the
+    whole requirement.** They keep their numbers, their own titles and their
+    place in the cursor's path; the only thing they gain is surviving `f`.
+
+    Two consequences worth stating rather than discovering:
+
+      - **Over-inclusion is the accepted price.** An unrelated Claude pane
+        sharing the session shows up under `f`. It cannot be narrowed without
+        guessing which pane is the lead, and guessing is what this function
+        stopped doing. Showing one row too many is recoverable; crowning the
+        wrong pane is not.
+      - **The roster is never edited.** An inference must not be written into
+        the structure that holds what was actually read, or no later reader
+        can tell the two apart. `inferred_pane` exists on the lead's entry as
+        the place a future inference would go — empty today, and nothing
+        consults it.
+
+    `is_lead` and its label are still produced, but only from real data: a
+    roster whose `tmuxPaneId` is a genuine `%NN`. That path is exercised and
+    works. It is dead only because of what upstream currently writes, so it
+    comes alive the day that changes, and must not be deleted for looking
+    unused.
+
+    **The deduction is anchored on the teammates' session, so a team with no
+    teammates has no anchor and reaches none of this** — the loop bails
+    before any of the above. That is why a team whose only member is the lead
+    contributes no rows at all, which is a boundary of the design rather than
+    a gap in it.
     """
     if not snap or not pane_session:
         return snap
@@ -440,30 +466,36 @@ def attach_lead(snap, pane_session):
         # unrelated Claude panes to protect a lead that is not missing.
         if lead is None or lead["pane"]:
             continue
+        # Where an inference would be recorded if this ever made one. It is
+        # a field of our own beside the roster's, never the roster's `pane`,
+        # so "what the file said" and "what we worked out" stay separable no
+        # matter what a later version decides to put here.
+        lead.setdefault("inferred_pane", "")
+        # The anchor: a team is spawned by splitting the window its lead is
+        # already in, so the team is wherever its teammates turned up. With
+        # no teammates there is no anchor and nothing below can run — which
+        # is exactly why a team whose only member is the lead stays invisible.
         mate_panes = {m["pane"] for m in t["members"] if m["pane"] and m["is_mate"]}
         sessions = {pane_session[p] for p in mate_panes if p in pane_session}
         if not sessions:
             continue
-        candidates = sorted(
-            p for p, s in pane_session.items()
-            if s in sessions and p not in by_pane
-        )
-        if not candidates:
-            continue
-        if len(candidates) == 1:
-            lead["pane"] = candidates[0]
-            by_pane[candidates[0]] = lead
-            continue
-        for p in candidates:
-            # Neither a teammate nor a confirmed lead: it exists only so the
-            # team filter keeps the row. It deliberately carries no name, so
-            # the name column falls through to the pane's own title instead
-            # of being told it is somebody it might not be.
+        for p in sorted(pane_session):
+            if pane_session[p] not in sessions or p in by_pane:
+                continue
+            # A pane in the team's session that is not a teammate. The lead
+            # is one of these; which one is not knowable, and the count does
+            # not make it knowable — a single unexplained pane is a single
+            # unexplained pane, not a confession. So the entry asserts
+            # nothing: no name, so the name column falls through to the
+            # pane's own title; no `is_lead`, so no tag; no `is_mate`, so it
+            # keeps its number and its place in the cursor's path. The one
+            # thing it does is exist, which is what carries the row through
+            # the team filter.
             by_pane[p] = {
                 "name": "", "type": "", "is_lead": False, "is_mate": False,
                 "pane": p, "cwd": "", "colour": "", "sgr": "",
                 "team": t["team"], "inbox": 0, "label": "",
-                "doing": "", "doing_id": "",
+                "doing": "", "doing_id": "", "doing_waiting": [],
             }
     return snap
 
