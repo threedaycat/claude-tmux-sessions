@@ -816,9 +816,10 @@ each of them in turn walked you past the destination through rows that
 mostly repeat what the lead's row already said.
 
 The cost is real and deliberate — no number, no cursor, therefore no
-`Enter`. What remains is `/` search (which can still surface and act on
-one — Enter there jumps to the pane, and that path is left working on
-purpose), tmux's own pane switching once you're in the window, and `f`.
+`Enter`. What remains is `l` (below, which lifts it for one team at a
+time), `/` search (which can still surface and act on one — Enter there
+jumps to the pane, and that path is left working on purpose), tmux's own
+pane switching once you're in the window, and `f`.
 
 Under `f` the marker is not emitted at all, so teammates are ordinary pane
 rows again. That mode exists to look at them, so there they are the
@@ -830,11 +831,63 @@ machinery as `a` — including numbering *before* filtering, so nothing
 renumbers. With no team present the key is inert and the header doesn't
 mention it.
 
-It survived the fold because it acquired a second job on the way: it is
-the only way to put the cursor on a teammate. Without it the marker above
-would make them permanently unreachable except through `/` search, so the
-key that looked redundant once teams stopped having their own block is in
-fact the escape hatch for the row kind that stopped being selectable.
+It survived the fold because it acquired a second job on the way: for a
+while it was the only way to put the cursor on a teammate. Without it the
+marker above would have made them permanently unreachable except through
+`/` search, so the key that looked redundant once teams stopped having
+their own block turned out to be the escape hatch for the row kind that
+stopped being selectable.
+
+**`l` unfolds one lead's teammates** so `j`/`k` walk them, and `h` on one
+of them folds the team again. `h` and `l` were already one level out and
+one level in — session mode is the level above panes — and on these two
+kinds of row they simply mean one level further. Everywhere else they still
+switch cursor mode exactly as before.
+
+It is the small version of `f`: `f` re-renders the whole list as teams,
+which is what you want when the question is *who is on which team*; `l` is
+what you want when the question is *this* team and the answer is two rows
+down. Nothing is rebuilt and nothing renumbers — the rows were on screen
+the whole time, only unreachable.
+
+**The entire state is one row index**, in `$EXPAND_FILE`. It can be that
+small because `bin/list-rows.sh` emits a team's members directly below
+their lead, so the teammates *are* the contiguous run of `mate` rows under
+that index. Nothing in the cursor code needs to know agent ids, or which
+pane leads which, and nothing has to stay in agreement with the roster.
+
+The unfold is an excursion, not a mode: walking out of the run folds it
+again, and so does anything that rebuilds the list (`a`, `f`, `ctrl-x`) or
+jumps away by number. The lead itself counts as inside the run, so `k` off
+the first teammate lands on its lead with the team still open, and one more
+`k` closes it on the way past.
+
+Three things had to be handled for that to hold together:
+
+- **A rebuild while sitting on a teammate.** `remember_cursor` walks up to
+  the lead before remembering, because the rebuild folds the team: without
+  it the pane-id match finds the teammate again and `pos()` parks the cursor
+  on a row `j`/`k` can no longer move from. Under `f` it never fires —
+  there the marker is absent, teammates are ordinary rows, and staying on
+  one is correct.
+- **The header after a rebuild.** `reload_keeping_place` now sends one, and
+  deliberately without a row: it runs from key branches *above* the row
+  predicates, where `is_pane`/`is_mate` don't exist yet — and a call to a
+  not-yet-defined function inside a condition fails *quietly*, which is how
+  the row-aware version silently never fired there. It would be wrong even
+  working: those predicates are built from the rows that function has just
+  replaced.
+- **A stale index.** If the remembered lead has no `mate` row under it any
+  more, the unfold folds itself on the next keypress rather than trusting
+  the number.
+
+The `l 展开队员` hint is **contextual, and goes in front**. The pane header
+is already 115 columns while the list side of a split picker is around 79,
+so it arrives truncated — a permanent thirteenth entry would only push an
+existing one off the end, and anything *appended* is never on screen at all.
+It is advertised on the rows where the key does something, which is also
+where you would look for it, and on a lead row `l` is the most interesting
+key there is.
 
 While the lead's pane was unidentifiable, `f` showed a list in which **no
 row had a number** — teammates decline them by design, and the only row
@@ -1035,6 +1088,102 @@ to `~/.claude/tmux-quota-cache.json` and fall back to it (muted grey bar + a `~`
 "last known" marker) until fresh data returns, so the segment never just blinks
 out. A quiet `5h ░░░░░░░░░░ ?` placeholder shows only when there's no data at all.
 
+## The overview page (`o`)
+
+The row list is a list: it shows every tracked pane in tmux order and leaves
+the reading to you. That is the right shape for *going somewhere* and the
+wrong shape for the question you have when you sit back down, which is not
+"where is pane 12" but **"what happened while I was away"**.
+
+`o` answers it as **one card per tmux session**, ordered by urgency: the
+session holding the longest-waiting pane comes first, and inside a card the
+panes are ordered the same way (⏸ WAIT, then unread ✔ DONE, then ▶ RUN, then
+the quiet ones). The resource half — 5h quota, 7-day window, today's tokens
+by model, the 14-day sparkline — is pinned in fzf's footer, where it stays
+while you walk the cards.
+
+**Cards by session, not blocks by state.** The first version grouped panes
+into a `等你` block and a `在跑` block. That answered "what needs me" and then
+left you to work out where those panes actually were — and it split a session
+in half whenever one of its panes finished. A session is a place you go, so
+it is the unit worth drawing a box around; urgency lives in the *order* of
+the boxes instead, which loses nothing, because the top of the page is still
+whatever needs you most. Session order here is therefore the opposite choice
+from the picker's list, where it is tmux's own creation order specifically so
+the list doesn't reshuffle under you while you work: this screen is read once,
+on arrival, and then acted on.
+
+**A card title's chips are only the three states that mean something** — ⏸ / ✔
+/ ▶ — with everything quiet collapsed into a dim `+6 安静`. Aged-out DONE and
+READ both draw with a tick, so listing them as chips put the same glyph on the
+line twice, distinguishable only by intensity, hiding exactly the distinction
+(unread vs already-seen) that must not need a second look.
+
+**The rows are selectable and Enter jumps.** A pane row jumps to its pane; a
+card title jumps to that session's active pane — where you last were in it.
+Two kinds of row have nothing to jump to: the blank line between cards, and a
+teammate the roster knows about that has no pane (or a pane nothing is
+tracking). Those keep an empty jump field, and Enter on one puts a warning in
+the footer instead of leaving the page. **Listing them at all is the point** —
+the picker's list can't, because every row there is a jump target and one that
+silently swallowed Enter would be worse than not listing it. This page can,
+because here Enter can explain itself.
+
+**The preview is state, not screen.** The picker's own preview is the live
+screen; a second copy of it here would say nothing new. So a pane's card
+answers what a screen dump can't: where it is, how long it has been in this
+state, how full its context is (`ctx_bar`, the same meter as the statusline),
+which team owns it and what that member is on, what it has read in today, and
+its opening prompt. A session's card is the same question one level up —
+per-state counts, which windows it spans, its most urgent pane, the teams
+running in it, and a per-pane 读入 column the list has no room for. The 今日
+figures come from a `token-report.py` cache warmed in the background, so a
+card drawn in the first half-second simply has no 今日 line rather than
+waiting for one.
+
+**The greeting line is the whole point.** It states the number that decides
+what you do next — `5 个有结果等你看` — and states the good case out loud
+(`没人等你 · 2 个还在跑`) rather than leaving you to infer it from three
+empty lists. A dashboard you have to interpret is a list with extra steps.
+
+Three deliberate reuses, because this screen's only original content is the
+*bucketing*:
+
+- `display_name`, `label_of` and `fmt_age` are imported from
+  `bin/session-digest.py` (which has a `__main__` guard, so importing it
+  runs nothing; the hyphen in the filename is why it goes through
+  `importlib` rather than a plain import). A pane is therefore called the
+  same thing and its age worded the same way here as in the list and in the
+  preview. The first version of this screen named panes after their tmux
+  *window*, and three teammates in one window all came out as `lead` —
+  exactly the bug `display_name` exists to prevent.
+- The resource half is `bin/usage-footer.sh`, printed verbatim. It already
+  computes those numbers, in ANSI, and two implementations of one number is
+  how they come to disagree.
+- `agent_teams.snapshot()` for the roster and task counts.
+
+`input` (Claude idle, waiting on your next message) is rendered as DONE, the
+way the row list renders it — both mean "it finished, it's your turn", and
+this screen already groups them under `等你`. The rank is collapsed rather
+than the label, so the age phrasing follows automatically.
+`session-digest`'s own preview keeps IDLE separate because there the subject
+is one pane in detail.
+
+**What each part costs, which is why the page is shaped this way.** The cards
+are ~0.05s (one status file, one `tmux list-panes`, one roster read), so `r`
+can rebuild rows, greeting and footer freely. A card preview adds a transcript
+tail read. The quota block costs ~0.5s and is computed **once**, at open: `r`
+is about the panes, and none of the keys change the quota. The token cache is
+warmed in the background and nothing waits on it. Nothing is marked read:
+looking at the bridge is not visiting a pane.
+
+**Footers are swapped through `transform-footer(cat FILE)`, never inlined.**
+fzf parses an action's argument by matching parentheses, and this page's footer
+carries the sparkline line `峰值 9.1M (07-31)`. Balanced brackets happen to
+survive, but the first unbalanced one in whatever the quota block prints would
+silently truncate the action — so both versions of the footer (clean, and with
+the Enter warning) are written to disk and the actions only ever `cat` them.
+
 ## The token page (`t`)
 
 The footer answers "how much quota is left". The token page answers the next
@@ -1043,9 +1192,12 @@ question — **where did it go** — across every tracked pane rather than one:
 it, `q` leaves.
 
 **Two blocks, in the order the question gets asked.** An overview of the window
-(turns, and the four token classes as share bars), then a per-session ranking.
-Only the second one is actionable: with two dozen Claudes running, "today cost a
-lot" isn't news — "*this* one costs a lot" is.
+(turns, and the four token classes as share bars) as fzf's header, then a
+per-session ranking as the list itself. Only the second one is actionable: with
+two dozen Claudes running, "today cost a lot" isn't news — "*this* one costs a
+lot" is. Every session in the window gets a row now that the list scrolls, so the
+old "还有 N 个会话未显示" footnote has nothing left to say; the column head is the
+last header line, which keeps it pinned above the rows.
 
 **Why the ranking is sorted by tokens read in, and why `均/轮` is its own
 highlighted column.** Cost is roughly turns × the context each turn carried, and
@@ -1087,16 +1239,113 @@ to every child) and returns immediately in that state. The page needs none of th
 cursor-carrying that `a` and `ctrl-x` do: it reloads nothing, so fzf redraws the
 list exactly as it was.
 
-**A read-key loop, not a second fzf.** Nothing on the page is selectable, so
-nesting fzf inside fzf's `execute()` would only mean two sets of bindings
-fighting over `j`/`k`. `1` / `7` switch the window in place; every other key is
-ignored, so a stray keypress can't drop you out by accident. The keystroke is
-read from `/dev/tty` explicitly — a child of `execute()` inherits the picker's
-row pipe on stdin, and a plain `read` would hit EOF instantly and flash the page
-past. Terminal size comes from `stty size < /dev/tty` rather than `tput`: inside
+**It is a second fzf, and it started out not being one.** The first version was
+a read-key redraw loop, on the reasoning that nothing on the page was selectable,
+so nesting fzf inside fzf's `execute()` would only mean two sets of bindings
+fighting over `j`/`k`. Both halves of that were wrong, and the page said so out
+loud: the ranking *is* a list, what you want from a row ("which session is this,
+and what is it doing with all those tokens") is exactly what a preview window is
+for, and — the part that actually hurt — **the loop redrew on every keypress,
+including the keys it went on to ignore.** One `case` handled `1`/`7`/`q`; every
+other key fell through to a fresh ~1s transcript scan that arrived back at the
+same screen. Reported as "每次点击一个按键就要刷新 1s,感觉很卡".
+
+Terminal size still comes from `stty size < /dev/tty` rather than `tput`: inside
 command substitution tput's stdout is a pipe, so ncurses asks stderr instead, and
 with stderr redirected it finds no terminal and reports the terminfo default
-24×80 — which sized the page for a third of the real screen.
+24×80 — which sized the page for a third of the real screen. The page runs
+without `--height`, so fzf takes the alternate screen buffer and leaving it
+restores the picker's screen underneath instead of making it redraw.
+
+**The scan is split from the rendering by a cache file, and that is what makes
+the page cheap.** `token-report.py --scan --days N --cache F` writes one JSON
+file; `--overview`, `--rows` and `--detail` only ever read it. So a cursor move
+costs a small JSON read (~30ms including the live screen capture), not a scan.
+Three consequences worth knowing:
+
+- **Renders never scan.** A missing cache makes `--rows`/`--detail` print nothing
+  and exit 0, rather than quietly doing the 1s of work this split exists to keep
+  off the keypress.
+- **The window switch is warmed in the background.** Opening the page scans the
+  window you asked for, then forks a scan of the other one. `7` is usually
+  instant (measured 117ms and 132ms for the round trip); beat the warmer to it
+  and the bind's own `--scan` does the work instead — duplicated, never corrupt,
+  because the cache is replaced with `os.replace`.
+- **The page tracks no state of its own.** Each row carries the cache it was
+  built from as its third field, so `{3}` tells the preview what to read and
+  tells `r` what to rescan. `--scan --force` with no `--days` takes the window
+  from the cache it is replacing, which is what lets `r` be one string for both
+  windows. The cost is an empty window (no turns at all): no row, so no `{3}`,
+  so `r` does nothing there.
+
+**`reload`, not `reload-sync`, put the preview one window behind.** The switch is
+four actions — `execute-silent(scan)+reload(rows)+transform-header(overview)+first`
+— and `reload` is asynchronous: `first` applied to the *old* list, the preview
+fired for the old row 1 out of the old cache, and nothing re-fired it when the
+new rows landed. The screen then showed the 7-day ranking beside a card of
+today's numbers, which is the one failure mode a page like this must not have.
+`reload-sync` waits for the rows before applying the rest.
+
+**The ranking finally has session names in it.** It used to print `sid[:8]` — the
+one thing about a session that means nothing to the person reading it. The chain
+is the picker's chain (`list-rows.sh`), joined to a transcript through the status
+file's `session_id`: a name someone chose (`claude_sessions.py`) → the Agent
+Teams roster name → the pane title → the tmux window name. Below that sits one
+level the picker doesn't have: **a session's opening prompt**, which is the only
+human-readable label a transcript with no live pane has left. It is marked dim in
+the list and titled `未命名会话` in the card, because a sentence is not a name and
+a truncated one must not read as somebody's choice. Bounded to the top 30 rows —
+it is a file read per session, and the tail of the ranking is not what anybody is
+looking at.
+
+**Enter jumps, and a page inside `execute()` cannot do that by itself.** The
+page runs as a child of the picker's fzf, so it can neither exit the picker nor
+usefully switch the client — switching from inside the popup leaves the picker
+sitting open on top of the pane you just asked to be taken to. So the jump is a
+handoff: `bin/jump-handoff.sh` writes the pane id to `$JUMP_FILE` (created by the
+picker, cleaned up in its trap) and returns `abort`; the `t` binding's **trailing**
+transform runs after `execute()` returns and turns a non-empty `$JUMP_FILE` into
+an `abort` for the picker's own fzf; and the jump itself happens in the one place
+that already knew how — the picker's tail, with its existence check, its
+`mark-read`, and its `switch-client`/`select-window`/`select-pane`. Run outside
+the picker (`token-page.sh` by hand) there is no `$JUMP_FILE` and no one to hand
+to, so that path switches the client itself.
+
+**A dead row must not leave the page.** Half of a token ranking is sessions that
+have already closed — that is what the 7-day window is for — and exiting on Enter
+there would read as a jump that failed. Field 4 of a row is the pane, empty for
+those, and Enter on one swaps the footer for a warning (with the key hints still
+in it) and stays put.
+
+**`tmux display-message -p -t <pane> ''` is not a liveness check**, which three
+scripts here believed for months. For a pane id that no longer exists it exits 0
+and prints an empty format — measured with `%99999` — so every "pane 已经不存在了"
+guard in this repo was dead code, and a stale pane fell through to a raw tmux
+error instead. `tmux has-session -t <pane>` does the right thing (exit 1,
+`can't find pane: %99999`). It resolves an *empty* target to the current pane and
+exits 0, so callers still have to reject empty first.
+
+**Never let a probe run reach `switch-client`.** Verifying the jump end-to-end in
+a detached probe session moved the *real* client into the probe: a tmux command
+run from a pane whose session has no client attached resolves "the current
+client" to the most recently active client on the server, which is the one in
+front of the person running the test. Nothing was lost and the client was already
+back where it started, but the safe shape for this test is a stub `tmux` on
+`PATH` that logs `switch-client`/`select-window`/`select-pane` and forwards
+everything else.
+
+**What the preview says, and why the live screen is at the bottom of it.** The
+card is who the session is (name, status, elapsed, `session:window`, pane id,
+short id, cwd), what it was asked to do (its opening prompt), and where its
+tokens went (turns, mean per turn, peak, model, last activity, the four classes
+as share bars, a per-day sparkline in the 7-day view, and its share of the
+window's read volume). Under that: the live screen for a session still open in a
+pane, or the tail of its last reply for one that has closed. This is the
+*opposite* order from `preview-row.sh`, which puts the screen first because a
+pane preview is a screen dump with a footnote. Here the numbers are the point, so
+they get the top and the capture is trimmed to what is actually left over
+(`capture-pane -S -N` returns N + pane-height lines, so a 30-row budget came
+back as 75 and pushed the card off the top until the tail was taken explicitly).
 
 ## Surviving a tmux crash (tmux-resurrect integration)
 

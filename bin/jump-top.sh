@@ -71,7 +71,10 @@ if [ -z "$pane_id" ]; then
   exit 0
 fi
 
-if ! tmux display-message -p -t "$pane_id" '' >/dev/null 2>&1; then
+# has-session, not `display-message -p -t <pane> ''`: the latter exits 0 even
+# for a pane id that no longer exists, so this guard never fired. See the same
+# fix in claude-tmux-picker.sh.
+if ! tmux has-session -t "$pane_id" 2>/dev/null; then
   tmux display-message "pane 已经不存在了 ($pane_id)"
   exit 0
 fi
