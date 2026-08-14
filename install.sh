@@ -104,6 +104,12 @@ cat <<'EOF'
 tmux_conf_theme_window_status_format 和 ..._current_format。
 渲染时不起进程：hooks 直接把 badge 写进窗口选项。
 
+配套加上这条 hook，让「切到一个窗口」就算看过了（否则 read 只有 picker 和 prefix+W
+会设，你切过去看过了，状态栏还在拿绿色催你）。它不动 blocked 的 pane —— 顺手划过一个
+窗口不该把 WAIT 告警消掉：
+
+    set-hook -g pane-focus-in 'run-shell -b "python3 ~/.claude/hooks/tmux_status_update.py mark-seen #{pane_id}"'
+
 如果你的窗口名跟着 Claude 的 pane title 走，名字开头已经有 Claude 自己的状态字符
 （✳ 空闲 / ◑◐ 转圈），它只分得清在不在跑。显示时剥掉它，只留信息更全的 badge：
 

@@ -19,6 +19,10 @@ Modes:
   mark-read <pane>  called by claude-tmux-picker.sh right after it jumps to
                     <pane>, so a "done" pane the user has actually visited
                     once shows as already-seen instead of unread.
+  mark-seen <pane>  called by the `pane-focus-in` tmux hook: you switched
+                    to this pane, so a finished-and-unread one counts as
+                    read. Unlike mark-read it leaves `blocked` alone —
+                    cycling past a window must not dismiss a WAIT alert.
   mark-archived <pane>  called from within the picker (a bound key) to
                     hide a pane you're done caring about from the list.
                     Cleared automatically the next time that pane goes
@@ -412,6 +416,22 @@ def mark_read(pane):
     sync_window_badges()
 
 
+def mark_seen(pane):
+    """Softer mark-read for the `pane-focus-in` tmux hook: switching to a
+    pane means you're looking at its output, so a finished-and-unread pane
+    is now read — but a `blocked` one is untouched. Cycling past a window
+    must never silently dismiss a WAIT alert; that one you dismiss by
+    dealing with the prompt (or by jumping to it on purpose, which is what
+    the picker's mark-read is for)."""
+    def apply(data):
+        e = data.get(pane)
+        if e and e.get("status") in ("done", "input"):
+            e["read"] = True
+
+    with_status_file(apply)
+    sync_window_badges()
+
+
 def mark_archived(pane):
     def apply(data):
         if pane in data:
@@ -567,6 +587,53 @@ def render_badge(counts, run_panes=()):
     return " " + "".join(parts)
 
 
+def watched_panes():
+    """Panes a human is looking at *right now*: the active pane of every
+    attached client whose terminal actually has the OS focus.
+
+    tmux reports that focus in `client_flags` (needs `focus-events on`,
+    which is the default in most configs). Without it the set comes back
+    empty and nothing is auto-read — the old picker-only behaviour."""
+    try:
+        out = subprocess.check_output(
+            ["tmux", "list-clients", "-F", "#{client_flags}\t#{pane_id}"],
+            stderr=subprocess.DEVNULL, text=True,
+        )
+    except Exception:
+        return set()
+    panes = set()
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2 and "focused" in parts[0].split(","):
+            panes.add(parts[1])
+    return panes
+
+
+def mark_watched_read(data):
+    """Reading a pane's output *is* reading it. Until this existed, `read`
+    only got set by the picker and `prefix W` — so a pane you simply
+    switched to and read stayed a bright unread DONE, which is exactly the
+    nagging the inbox model is supposed to remove.
+
+    `blocked` is deliberately excluded: the WAIT alert is dismissed by
+    dealing with the prompt, not by having it on screen. Mutates `data` in
+    place so the caller's badge render sees the new flags."""
+    fresh = [p for p in watched_panes()
+             if p in data and not data[p].get("read")
+             and data[p].get("status") in ("done", "input")]
+    if not fresh:
+        return
+
+    def apply(stored):
+        for p in fresh:
+            if p in stored:
+                stored[p]["read"] = True
+
+    with_status_file(apply)
+    for p in fresh:
+        data[p]["read"] = True
+
+
 def sync_window_badges():
     """Recompute every window's badge from the status file and write the
     ones that changed. Called after each mutation (instant feedback) and
@@ -603,6 +670,8 @@ def sync_window_badges():
     # clearing them all.
     if data and not any(pane in win_of for pane in data):
         return
+
+    mark_watched_read(data)
 
     now = time.time()
     counts = {}
@@ -703,6 +772,8 @@ def main():
         record_notification()
     elif mode == "mark-read" and len(sys.argv) == 3:
         mark_read(sys.argv[2])
+    elif mode == "mark-seen" and len(sys.argv) == 3:
+        mark_seen(sys.argv[2])
     elif mode == "mark-archived" and len(sys.argv) == 3:
         mark_archived(sys.argv[2])
     elif mode == "clear":

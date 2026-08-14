@@ -168,6 +168,16 @@ team)时后面跟数字:
 - **看过的会暗下去。** 一个窗口里没有未读的东西时,badge **连同窗口名**一起变暗 —— 只有你
   当前所在的那个窗口例外,它得保持能看清。
 
+要让「暗下去」真的成立,切到一个窗口就得算「看过了」。加这条 hook:
+
+```tmux
+set-hook -g pane-focus-in 'run-shell -b "python3 ~/.claude/hooks/tmux_status_update.py mark-seen #{pane_id}"'
+```
+
+不加的话,`read` 只有走 picker 或 `prefix + W` 才会被设上,于是你明明切过去看过了,状态栏
+还在拿绿色的 `✔` 催你。`mark-seen` 比 `mark-read` 手轻:它**不动** `blocked` 的 pane ——
+顺手划过一个窗口,不该把 WAIT 告警消掉。
+
 `#{E:...}`(展开两次)是必需的,不是装饰:RUN 的 badge 本身就是一小段 format,写成
 `#{@claude_win}` 会把源码原样打出来。渲染时不起任何进程:hooks 直接把 badge 写进窗口级
 用户选项,所以状态一变,状态栏立刻就变。
