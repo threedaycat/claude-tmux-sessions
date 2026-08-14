@@ -30,6 +30,11 @@ Modes:
                     of the same window leaves a stale row behind (the old
                     pane is still alive, so liveness checks don't catch
                     it) and the window shows up twice in the picker.
+  sync-windows      recompute the per-window badge (@claude_win, rendered
+                    inline by window-status-format) for every window from
+                    the current state. Called automatically by every mode
+                    that changes state; exposed on its own so a status-bar
+                    render can refresh it too.
   prune             remove entries whose pane is gone, or whose pane is
                     now just running a plain shell (Claude exited without
                     SessionEnd firing — crash, kill, or a session started
@@ -348,6 +353,10 @@ def record_status(status, stdin_data):
     }
 
     with_status_file(lambda data: data.__setitem__(pane, entry))
+    # Before the restore bookkeeping and the (slower) blocked notification
+    # path: the window list is the thing you're looking at, so it should
+    # flip the moment the state does.
+    sync_window_badges()
 
     sid = stdin_data.get("session_id")
     if sid:
@@ -400,6 +409,7 @@ def mark_read(pane):
             data[pane]["read"] = True
 
     with_status_file(apply)
+    sync_window_badges()
 
 
 def mark_archived(pane):
@@ -408,6 +418,7 @@ def mark_archived(pane):
             data[pane]["archived"] = True
 
     with_status_file(apply)
+    sync_window_badges()
 
 
 def clear_pane():
@@ -416,6 +427,7 @@ def clear_pane():
         return
 
     with_status_file(lambda data: data.pop(pane, None))
+    sync_window_badges()
 
     # Graceful exit — also forget the restore mapping, so a later
     # tmux-resurrect restore doesn't resurrect a Claude you closed on
@@ -426,6 +438,203 @@ def clear_pane():
         session_name, window_index, _wname, pane_index, _cwd = info
         key = f"{session_name}:{window_index}.{pane_index}"
         with_status_file(lambda data: data.pop(key, None), path=RESTORE_FILE)
+
+
+# Per-window badge in tmux's own window list ---------------------------------
+#
+# status-badge.sh gives you the aggregate ("3 running, 1 waiting") but not
+# *which window*, so answering "who's waiting?" still meant opening the
+# picker. This writes each window's own state into a window-scoped user
+# option, which the window list renders inline:
+#
+#     set -g window-status-format '#I#{E:@claude_win} #W'
+#
+# `E:` (expand twice) is required, not decoration: the RUN badge is itself
+# a small format that reads the pane's live spinner glyph. Plain
+# `#{@claude_win}` would print its source text.
+#
+# A user option costs nothing at render time (no #() subprocess per window),
+# and every mutation below refreshes it, so the bar changes the instant a
+# hook fires rather than at the next status-interval tick.
+WINDOW_OPTION = "@claude_win"
+
+# An unread DONE nobody came back to in this long has been abandoned; it
+# stays in the bar but greys out, same threshold and reasoning as the picker
+# and status-badge.sh.
+IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
+
+# Same icons and colours as the picker's labels, so one vocabulary covers
+# both: ⏸ WAIT (blocked on a permission choice), ✔ DONE (finished, unread),
+# ▶ RUN (Claude busy), ✓ READ (finished, already visited), dim ✔ (unread but
+# aged out). ︎ forces the narrow text glyph so the bar keeps its widths.
+#
+# RUN is deliberately the quietest of the three live states: it's the one
+# you can do nothing about, and it's also the one that moves (see
+# run_spinner) — a moving thing in the corner of your eye earns attention
+# it doesn't deserve, so it gets muted gold instead of the picker's bright
+# yellow. WAIT and DONE keep full brightness; those are the ones that want
+# you.
+#
+# READ and the aged-out DONE get no colour at all, just dimness — colour is
+# how this bar says "look here", and a pane you've already looked at has no
+# claim on that. They keep distinct glyphs (✓ seen / ✔ unread-but-old) so
+# the two are still tellable apart up close.
+DIM = "#585858"
+BADGE_STYLES = [
+    ("wait",  "⏸︎", "#[fg=#ff5f5f,bold]"),
+    ("done",  "✔︎", "#[fg=#5fff00,bold]"),
+    ("run",   "▶︎", "#[fg=#af8700]"),
+    ("read",  "✓︎", f"#[fg={DIM}]"),
+    ("stale", "✔︎", f"#[fg={DIM}]"),
+]
+
+# States that make no claim on you. A window with nothing but these fades
+# out entirely — name included (see render_badge).
+QUIET_STATES = {"read", "stale"}
+
+
+def badge_state(entry, now):
+    """Which of the five badge states a status entry is in — the same
+    branch order list-rows.sh uses to pick a row's label."""
+    status = entry.get("status", "running")
+    if status == "blocked":
+        return "wait"
+    if status in ("done", "input"):
+        if entry.get("read"):
+            return "read"
+        return "stale" if now - entry.get("updated_at", now) >= IDLE_STALE else "done"
+    return "run"
+
+
+def run_spinner(pane):
+    """A RUN icon that *moves*: Claude Code writes a spinner character at
+    the head of its terminal title while it works, so instead of a static
+    ▶ we borrow that pane's own live glyph. It animates for free — the
+    title changes at Claude's spinner rate, each change redraws the status
+    line — and it costs no timer and no process of ours.
+
+    This is a tmux format, not a finished string, so the window list has to
+    read the option through #{E:...} (expand twice) for it to run.
+
+    `#{s|^.||:pane_id}` drops the leading `%` before comparing: a literal
+    `%23` in a format is eaten by the strftime pass (it arrives at the
+    comparison as `23`) and would never match `#{pane_id}`'s `%23`.
+
+    The inner test is the fallback: if the pane's title doesn't start with
+    a non-ASCII character then Claude isn't drawing a spinner there (no
+    title support, a plain shell title) and we show the static ▶ instead,
+    so this degrades on its own rather than printing a stray letter."""
+    num = pane.lstrip("%")
+    return ("#{P:#{?#{==:#{s|^.||:pane_id}," + num + "},"
+            "#{?#{m:[ -~],#{=1:pane_title}},▶︎,#{=1:pane_title}},}}")
+
+
+def render_badge(counts, run_panes=()):
+    """One window's badge: every state present, worst first, each with its
+    count when a window holds more than one pane in that state (agent teams
+    put four Claudes in one window). Empty when nothing is tracked.
+
+    The lone-running case — one window, one busy Claude, by far the common
+    one — gets the live spinner; several at once stay a static ▶ with a
+    count, because four spinners in a window list is a light show, not
+    information."""
+    parts = []
+    for state, icon, style in BADGE_STYLES:
+        n = counts.get(state, 0)
+        if not n:
+            continue
+        if state == "run" and n == 1 and len(run_panes) == 1:
+            icon = run_spinner(run_panes[0])
+        if state in QUIET_STATES:
+            # Dim everywhere except the window you're in — that entry is a
+            # bright highlight bar, and #585858 on it is unreadable. Empty
+            # branch = inherit the entry's own style.
+            style = "#{?window_active,,%s}" % style
+        parts.append(f"{style}{icon}{n if n > 1 else ''}#[default]")
+    if not parts:
+        return ""
+    # Nothing in this window wants anything from you, so the whole entry
+    # fades — the badge ends on the dim colour instead of #[default] and
+    # the window name after it inherits it. Safe to leave hanging: tmux
+    # re-applies window-status-style at the start of every window entry, so
+    # the dimming stops at this window's edge.
+    # ...except for the window you're actually in: the current-window entry
+    # is a bright highlight bar, and dim grey on it is unreadable. #{E:}
+    # expansion is what makes this test possible at render time.
+    if set(counts) <= QUIET_STATES:
+        return (" " + "".join(parts)
+                + "#{?window_active,#[default],#[fg=%s]}" % DIM)
+    return " " + "".join(parts)
+
+
+def sync_window_badges():
+    """Recompute every window's badge from the status file and write the
+    ones that changed. Called after each mutation (instant feedback) and
+    from status-badge.sh's render (self-healing: aging, panes that died
+    without SessionEnd, options left behind by an older build)."""
+    try:
+        panes = subprocess.check_output(
+            ["tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{window_id}"],
+            stderr=subprocess.DEVNULL, text=True,
+        )
+        windows = subprocess.check_output(
+            ["tmux", "list-windows", "-a", "-F", "#{window_id}\t#{%s}" % WINDOW_OPTION],
+            stderr=subprocess.DEVNULL, text=True,
+        )
+    except Exception:
+        return  # no reachable tmux server — nothing to draw on
+
+    win_of = {}
+    for line in panes.splitlines():
+        p = line.split("\t")
+        if len(p) == 2:
+            win_of[p[0]] = p[1]
+
+    try:
+        with open(STATUS_FILE) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+
+    # Pane ids only mean something relative to one tmux server. If the file
+    # is non-empty yet overlaps this server by nothing, we're looking at the
+    # wrong server (or a restart renumbered everything) — same ambiguity
+    # prune() refuses to act on, so leave the badges alone rather than
+    # clearing them all.
+    if data and not any(pane in win_of for pane in data):
+        return
+
+    now = time.time()
+    counts = {}
+    run_panes = {}
+    for pane, entry in data.items():
+        win = win_of.get(pane)
+        if win is None or entry.get("archived"):
+            continue
+        state = badge_state(entry, now)
+        counts.setdefault(win, {})
+        counts[win][state] = counts[win].get(state, 0) + 1
+        if state == "run":
+            run_panes.setdefault(win, []).append(pane)
+
+    cmd = []
+    for line in windows.splitlines():
+        parts = line.split("\t", 1)
+        win = parts[0]
+        current = parts[1] if len(parts) == 2 else ""
+        wanted = render_badge(counts.get(win, {}), run_panes.get(win, ()))
+        if wanted == current:
+            continue                      # no redraw for an unchanged bar
+        if cmd:
+            cmd.append(";")
+        if wanted:
+            cmd += ["set-option", "-w", "-t", win, WINDOW_OPTION, wanted]
+        else:
+            cmd += ["set-option", "-wqu", "-t", win, WINDOW_OPTION]
+
+    if cmd:
+        subprocess.run(["tmux"] + cmd, check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # What a pane's foreground command looks like once Claude Code has exited
@@ -472,6 +681,10 @@ def prune():
                 del data[pane]
 
     with_status_file(apply)
+    # prune runs from status-badge.sh on every status render, which makes
+    # this the badges' heartbeat: it retires panes that died without
+    # SessionEnd and ages unread DONEs into their dim form.
+    sync_window_badges()
 
 
 def main():
@@ -496,6 +709,8 @@ def main():
         clear_pane()
     elif mode == "prune":
         prune()
+    elif mode == "sync-windows":
+        sync_window_badges()
 
 
 if __name__ == "__main__":
