@@ -206,6 +206,19 @@ several ways at once — because any single channel can miss:
   right after a `/clear`) has nothing new to say, so it shouldn't keep flagging
   you. The overwrite-on-status-change behavior means it naturally goes back to
   unread `DONE` the next time that pane actually finishes something new.
+- **Looking at it also counts.** Reading a pane's output *is* reading it, and
+  for a while the only way to set `read` was to arrive through this tool's own
+  UI — so a window you simply switched to and read stayed a bright unread
+  `DONE`, nagging you about something you'd already seen. Two paths close that:
+  - `mark-seen <pane>`, wired to tmux's `pane-focus-in` hook, fires the moment
+    you switch to a pane. It is deliberately *not* `mark-read`: a `blocked` pane
+    is left alone, because cycling past a window must never silently dismiss a
+    WAIT alert. That one you dismiss by dealing with the prompt, or by jumping
+    to it on purpose.
+  - `mark_watched_read()`, inside the badge sync, marks whatever the *focused*
+    client is looking at right now (`client_flags` contains `focused`). This is
+    the backstop and it catches the case the hook can't: a pane that finishes
+    while you're already sitting in it, where no focus change ever happens.
 - `ctrl-x` archives the highlighted pane (`mark-archived`) and reloads the list
   in place — for a pane you've decided needs no more attention. The cursor
   advances to the row that took its place rather than jumping to the top (see

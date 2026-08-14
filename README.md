@@ -196,6 +196,18 @@ Three things it does on purpose:
 - **Seen windows fade.** When nothing in a window is unread, the badge *and the
   window name* go dim — except for the window you're in, which stays legible.
 
+For that fade to mean anything, switching to a window has to count as reading
+it. Add the hook:
+
+```tmux
+set-hook -g pane-focus-in 'run-shell -b "python3 ~/.claude/hooks/tmux_status_update.py mark-seen #{pane_id}"'
+```
+
+Without it, `read` is only set when you arrive through the picker or
+`prefix + W`, so a window you switched to and read stays a bright unread `✔`.
+`mark-seen` is deliberately gentler than `mark-read`: it leaves `blocked` panes
+alone, so cycling past a window can't silently dismiss a WAIT alert.
+
 `#{E:...}` (expand twice) is required, not decoration: the RUN badge is itself a
 tiny format. Plain `#{@claude_win}` prints its source text. Nothing runs at
 render time — the hooks write the badge into a window-scoped user option, so the
