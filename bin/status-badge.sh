@@ -14,8 +14,16 @@ STATUS_FILE="$HOME/.claude/tmux-claude-status.json"
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 [ -L "$SCRIPT_PATH" ] && SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
 BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+#
+# prune also refreshes the per-window badges (@claude_win), which makes this
+# their heartbeat — hooks flip them the instant a state changes, this catches
+# what no hook fires for (an unread DONE ageing out, a pane killed without
+# SessionEnd). With no status file at all there's nothing to prune but there
+# may still be badges left over from before it was emptied, so sync alone.
 if [ -s "$STATUS_FILE" ]; then
   python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
+else
+  python3 "$BIN_DIR/../hooks/tmux_status_update.py" sync-windows 2>/dev/null || true
 fi
 
 python3 - "$STATUS_FILE" <<'PYEOF'

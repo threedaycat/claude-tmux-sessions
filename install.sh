@@ -94,6 +94,21 @@ cat <<'EOF'
 
     #(~/.claude/hooks/status-badge.sh)
 
+可选：让每个窗口在窗口列表里直接显示自己的 Claude 状态（⏸ 等你确认 / ✔ 跑完未读 /
+▶ 正在跑 / ✓ 已看过），不用打开 picker 就知道是哪个窗口：
+
+    set -g window-status-format         '#I#{E:@claude_win} #W'
+    set -g window-status-current-format '#I#{E:@claude_win} #W'
+
+用 gpakosz/.tmux 的话，改成放进 ~/.tmux.conf.local 里的
+tmux_conf_theme_window_status_format 和 ..._current_format。
+渲染时不起进程：hooks 直接把 badge 写进窗口选项。
+
+如果你的窗口名跟着 Claude 的 pane title 走，名字开头已经有 Claude 自己的状态字符
+（✳ 空闲 / ◑◐ 转圈），它只分得清在不在跑。显示时剥掉它，只留信息更全的 badge：
+
+    set -g window-status-format '#I#{E:@claude_win} #{s|^[^ -~] ||:window_name}'
+
 可选：如果你用 tmux-resurrect/continuum，加上这行，恢复布局后自动
 claude --resume 回到每个 pane 原来的会话（正常退出的不会被复活）：
 

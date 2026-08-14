@@ -167,6 +167,59 @@ counts of unread-done and running:
   <img src="docs/statusbar.png" alt="Status line segment: 5h quota bar at 32%, a red WAIT badge for deploy-script waiting 12s, then 5 done-unread and 3 running" width="700">
 </p>
 
+That segment is an aggregate — it tells you *how many* are waiting, not *which
+window*. For the per-window answer, put `#{@claude_win}` in your window list:
+
+```tmux
+set -g window-status-format         '#I#{E:@claude_win} #W'
+set -g window-status-current-format '#I#{E:@claude_win} #W'
+```
+
+Every window that holds a Claude pane then carries its own state right in the
+window list — `⏸` waiting on you, `✔` finished and unread, `◑` still running,
+`✓` finished and already seen, dim `✔` unread but hours old — with a count
+appended when one window holds several (agent teams):
+
+```
+1 ✓ journal    3 ✔ ai-super-app    6 ◑ algo-eval    2 ⏸2▶ deploy
+```
+
+Three things it does on purpose:
+
+- **RUN moves.** A lone running pane shows Claude's own spinner glyph, taken
+  live from that pane's terminal title, so "still working" reads without being
+  read. It falls back to a static `▶` when the pane isn't drawing one, and stays
+  static when a window holds several running panes — four spinners in a window
+  list is a light show, not information.
+- **Only what wants you is coloured.** RUN is muted gold (you can't help it),
+  WAIT and DONE keep full brightness (you can).
+- **Seen windows fade.** When nothing in a window is unread, the badge *and the
+  window name* go dim — except for the window you're in, which stays legible.
+
+`#{E:...}` (expand twice) is required, not decoration: the RUN badge is itself a
+tiny format. Plain `#{@claude_win}` prints its source text. Nothing runs at
+render time — the hooks write the badge into a window-scoped user option, so the
+bar flips the instant a state changes.
+
+With [gpakosz/.tmux](https://github.com/gpakosz/.tmux), put it in
+`tmux_conf_theme_window_status_format` and
+`tmux_conf_theme_window_status_current_format` in `~/.tmux.conf.local` instead.
+
+**If your window names follow Claude's pane title** (a common `automatic-rename-format`
+trick), they already start with Claude's own status character — `✳` idle, `◑◐`
+spinning. That character only separates "running" from "not running", which is
+the part the badge already says better, so two icons end up saying one thing.
+Strip it in the format and keep the badge:
+
+```tmux
+set -g window-status-format '#I#{E:@claude_win} #{s|^[^ -~] ||:window_name}'
+```
+
+The substitution drops *one* leading non-ASCII character plus its space — tmux's
+`s///` matches characters, not bytes, so CJK window names survive intact. Don't
+reach for a `{1,4}`-style quantifier: the `}` closes the `#{...}` and the whole
+format silently falls apart.
+
 ### Check it's working
 
 In any Claude Code pane inside tmux, send a prompt, then:

@@ -142,6 +142,52 @@ bind W run-shell '~/.claude/hooks/jump-top.sh'
   <img src="docs/statusbar.png" alt="状态栏片段:5 小时额度条 32%、deploy-script 的红色 WAIT badge(已等 12 秒)、然后是 5 个完成未读和 3 个运行中" width="700">
 </p>
 
+这一条是**总数**:它告诉你有几个在等你,但不告诉你是哪个窗口。想让每个窗口自己说话,把
+`#{@claude_win}` 放进窗口列表的格式里:
+
+```tmux
+set -g window-status-format         '#I#{E:@claude_win} #W'
+set -g window-status-current-format '#I#{E:@claude_win} #W'
+```
+
+之后每个有 Claude 的窗口都会在窗口列表里带上自己的状态 —— `⏸` 等你确认、`✔` 跑完未读、
+`◑` 正在跑、`✓` 已经看过、暗 `✔` 未读但放了好几个小时;一个窗口里有多个 Claude(agent
+team)时后面跟数字:
+
+```
+1 ✓ journal    3 ✔ ai-super-app    6 ◑ algo-eval    2 ⏸2▶ deploy
+```
+
+有三处是刻意这么做的:
+
+- **RUN 会动。** 窗口里只有一个在跑时,直接借用那个 pane 终端标题里 Claude 自己的转圈字符,
+  「还在跑」不用读就知道。pane 没画转圈字符时退回静态 `▶`;一个窗口里好几个在跑也保持静态
+  —— 窗口列表里四个东西一起转,那是灯光秀不是信息。
+- **只有需要你的状态才有颜色。** RUN 是压暗的暗金色(反正你也帮不上忙),WAIT 和 DONE 保持
+  高亮(这两个才要你)。
+- **看过的会暗下去。** 一个窗口里没有未读的东西时,badge **连同窗口名**一起变暗 —— 只有你
+  当前所在的那个窗口例外,它得保持能看清。
+
+`#{E:...}`(展开两次)是必需的,不是装饰:RUN 的 badge 本身就是一小段 format,写成
+`#{@claude_win}` 会把源码原样打出来。渲染时不起任何进程:hooks 直接把 badge 写进窗口级
+用户选项,所以状态一变,状态栏立刻就变。
+
+用 [gpakosz/.tmux](https://github.com/gpakosz/.tmux) 的话,改成放进 `~/.tmux.conf.local`
+里的 `tmux_conf_theme_window_status_format` 和 `tmux_conf_theme_window_status_current_format`。
+
+**如果你的窗口名是跟着 Claude 的 pane title 走的**(常见的 `automatic-rename-format` 玩法),
+那么名字开头已经有一个 Claude 自己的状态字符了:`✳` 空闲、`◑◐` 转圈。那个字符只分得清
+「在不在跑」,而这正是 badge 说得更清楚的部分 —— 留着就是两个图标说同一件事。显示时把它剥掉,
+只留 badge:
+
+```tmux
+set -g window-status-format '#I#{E:@claude_win} #{s|^[^ -~] ||:window_name}'
+```
+
+这个替换只去掉**开头一个**非 ASCII 字符加它后面的空格 —— tmux 的 `s///` 按字符而不是按字节
+匹配,所以中文窗口名不会被误伤。别用 `{1,4}` 这类量词:里面的 `}` 会把 `#{...}` 提前闭合,
+整段格式当场失效,而且不报错。
+
 ### 确认装好了
 
 在 tmux 里的任意一个 Claude Code pane 发一条消息,然后:

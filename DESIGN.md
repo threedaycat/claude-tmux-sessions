@@ -84,6 +84,98 @@ overridable via env) **ages out**: it drops off the ambient status bar entirely
 and, in the picker, dims and sinks below everything else — still reachable, just
 no longer nagging.
 
+## The per-window badge (`@claude_win`)
+
+`status-badge.sh` answers *how many* panes want you; it can't answer *which
+window* without naming them all, which is exactly the list the picker exists to
+show. So each window also carries its own state, inline in tmux's own window
+list:
+
+```tmux
+set -g window-status-format '#I#{E:@claude_win} #W'
+```
+
+`sync_window_badges()` (in `hooks/tmux_status_update.py`) recomputes every
+window's badge from the status file and writes it into that window-scoped user
+option — the same five states and icons as the picker's labels, with a count
+appended when one window holds several Claude panes (an agent team puts four in
+one window):
+
+```
+3 ✔ dev      6 ◑ algo-eval      2 ⏸2▶ deploy
+```
+
+Two properties drove the design:
+
+- **A user option, not `#()`.** A `#(...)` in `window-status-format` would fork
+  one subprocess *per window per refresh*; a user option is read straight out of
+  tmux's option table and costs nothing at render time. tmux's status drawing
+  parses `#[...]` in the *expanded* string, so the styles stored in the option
+  are honoured — the same reason `status-badge.sh`'s output can be coloured.
+- **Push, don't poll.** Every mode that changes state (`running`/`done`/`notify`
+  /`mark-read`/`mark-archived`/`clear`) calls the sync, so the bar flips the
+  moment a hook fires rather than at the next `status-interval` tick. `prune`
+  calls it too, and `prune` runs from `status-badge.sh` on every status render —
+  that's the heartbeat that catches what no hook fires for: an unread `DONE`
+  ageing out, a pane killed without `SessionEnd`, options left behind by an
+  earlier build.
+
+Only changed windows are written. An unchanged badge would still be a
+`set-option`, and every `set-option` forces a status redraw — sync is on the
+render path, so writing unconditionally would have the bar redrawing itself
+forever.
+
+It inherits the wrong-server guard from `prune()` verbatim: if the status file
+is non-empty but overlaps this tmux server by not one pane id, we're talking to
+a different server (or a restart renumbered everything) and the badges are left
+alone rather than all cleared.
+
+### Why `#{E:...}`, and what that buys
+
+The option isn't always a finished string — for a lone running pane it's a small
+format, expanded again at draw time:
+
+```
+#{P:#{?#{==:#{s|^.||:pane_id},23},#{?#{m:[ -~],#{=1:pane_title}},▶︎,#{=1:pane_title}},}}
+```
+
+That reads *pane %23's live terminal title* and takes its first character.
+Claude Code writes a spinner glyph there while it works (`◑◐`, versus `✳` idle),
+so RUN animates at Claude's own rate, for free: the title changes, tmux renames
+the window, the status line redraws. No timer, no process, no `status-interval`
+to shorten. The inner test is the fallback — a title that starts with an ASCII
+character means Claude isn't drawing a spinner there, and the static `▶` is used
+instead, so this degrades on its own rather than printing a stray letter.
+
+Two details cost a debugging round each:
+
+- `#{s|^.||:pane_id}` strips the leading `%` before comparing, because a literal
+  `%23` in a format is eaten by tmux's strftime pass and reaches the comparison
+  as `23` — it would never match `#{pane_id}`. (Same class of trap: never use a
+  `{1,4}`-style quantifier in a format regex; the `}` closes the `#{...}` and
+  the format silently falls apart.)
+- Only *one* running pane gets the spinner. Four spinning glyphs in a window
+  list is a light show, not information, so a crowded window stays `▶4`.
+
+`#{E:}` also lets the badge ask about its own window at draw time, which is how
+the fade below can spare the window you're in.
+
+### What gets colour, and what fades
+
+Colour is this bar's way of saying *look here*, so only the states that want you
+get it. WAIT is red, unread DONE is bright green — and RUN, the state you can do
+nothing about, is muted gold rather than the picker's bright yellow, precisely
+because it's also the one that moves.
+
+READ and the aged-out DONE get no colour at all, just dimness, and the dimming
+doesn't stop at the icon: when *nothing* in a window is unread, the badge ends
+on the dim colour instead of `#[default]` and the window name inherits it, so
+the whole entry recedes. This is safe to leave hanging because tmux re-applies
+`window-status-style` at the start of every window entry — the fade stops at
+that window's edge. The one exception is `#{?window_active,...}`: the current
+window is a bright highlight bar and dim grey on it is unreadable, so the entry
+you're sitting in stays legible even after you've read it.
+
 ## The WAIT notification cascade
 
 A blocked pane is the one thing that actually stalls you, so it gets notified
