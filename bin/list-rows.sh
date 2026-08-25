@@ -116,6 +116,20 @@ if bin_dir and os.path.isdir(os.path.join(_claude_home, "sessions")):
     except Exception:
         manual_names = {}      # a broken read means "no chosen names", never a broken list
 
+# What each pane is working on — its opening ask, which fills the trailing
+# field the cwd used to have (see session_task.py for why that trade is
+# worth making, and why it costs one transcript read per session ever).
+# Gated on the same kind of one stat as teams and chosen names: no
+# projects directory, no import, no byte read, rows come out as before.
+task_of = {}
+if bin_dir and os.path.isdir(os.path.join(_claude_home, "projects")):
+    try:
+        sys.path.insert(0, bin_dir)
+        import session_task
+        task_of = session_task.tasks(data)
+    except Exception:
+        task_of = {}           # a broken read means "no tasks", never a broken list
+
 fmt = ("#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}"
        "\t#{pane_index}\t#{pane_current_path}\t#{pane_title}")
 try:
@@ -727,7 +741,10 @@ for s in sessions_sorted:
             trailing = member_tail(member, counts_of.get(member["team"], {}))
         else:
             name_cell = col(wname, NAME_W)
-            trailing = ""
+            # Clipped, because an opening ask has no length limit and this
+            # field runs to the end of the line: one pasted paragraph would
+            # push every row into a wrap. cwd stays reachable in the preview.
+            trailing = clip(task_of.get(pane, ""), 56)
         # Dim number gutter — the digits you press to jump straight here.
         # Three wide, not two: with 100 panes a 2-wide field silently drops
         # the leading digit *and* shifts every column on that row.
