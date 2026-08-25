@@ -86,23 +86,65 @@ def tmux_display(pane):
 
 
 def with_status_file(fn, path=STATUS_FILE):
-    """Open path read-write under an exclusive lock and hand the
-    parsed dict to fn, which mutates it in place; write the result back."""
+    """Hand the parsed dict at path to fn, which mutates it in place, and
+    write the result back atomically under an exclusive lock.
+
+    Atomicity is the whole point. The obvious version — truncate the file,
+    then dump onto the same handle — leaves a window where the file is
+    empty or half-written, and anything that kills the process inside that
+    window makes the state file permanently 0 bytes. That is not
+    hypothetical: status-badge.sh runs prune() on *every* status-bar
+    render, tmux kills #() children that overrun its timeout, and the
+    machine sleeps overnight. The next reader then parses an empty file,
+    starts from {}, and writes back only its own entry — every other
+    tracked pane silently vanishes, and since entries are only ever
+    (re)written by a hook firing, an idle pane never comes back until you
+    go talk to it. Write to a temp file and rename instead: rename is
+    atomic, so a reader sees either the whole old file or the whole new
+    one, never a stump.
+
+    The lock lives on a *separate* .lock file rather than on the data file,
+    because os.replace swaps the inode out from under anyone holding a lock
+    on the old one — two writers would each hold a valid lock on different
+    inodes and happily clobber each other. A fixed lock path can't be
+    replaced, so it actually excludes."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    with os.fdopen(fd, "r+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+    lock_fd = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
-            f.seek(0)
-            raw = f.read()
+            with open(path) as f:
+                raw = f.read()
             data = json.loads(raw) if raw.strip() else {}
+        except FileNotFoundError:
+            data = {}
         except Exception:
+            # Non-empty but unparseable: with atomic writes this shouldn't
+            # happen, so it means something outside this function mangled
+            # it. Keep the evidence instead of overwriting it — silently
+            # starting from {} is exactly the data loss we just fixed.
+            try:
+                os.replace(path, path + ".corrupt")
+            except Exception:
+                pass
             data = {}
         fn(data)
-        f.seek(0)
-        f.truncate()
-        json.dump(data, f, indent=2)
-        fcntl.flock(f, fcntl.LOCK_UN)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except Exception:
+                pass
+            raise
+    finally:
+        os.close(lock_fd)
 
 
 def frontmost_app():
