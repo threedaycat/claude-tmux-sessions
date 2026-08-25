@@ -335,6 +335,11 @@ def fmt_age(rank, secs):
     RUN = since the prompt was submitted (how long it's been running),
     WAIT = since the permission prompt appeared, DONE = since it
     finished (both the unread DONE and the already-seen READ)."""
+    # Discovered panes (see discover_claude_panes) carry no usable
+    # timestamp — we found them, nobody reported them, and inventing
+    # "0秒前" would read as "just finished", which is exactly wrong.
+    if secs < 0:
+        return "无交互记录"
     secs = max(0, int(secs))
     if secs < 60:
         d = f"{secs}秒"
@@ -398,6 +403,11 @@ for pane, e in data.items():
     status = e.get("status", "running")
     if status == "blocked":
         label, rank = "\033[1;31m⏸︎ WAIT\033[0m", -1   # permission choice — top priority, notified
+    elif e.get("discovered"):
+        # Claude is in that pane, that's all we know — it has never run a
+        # hook for us. Listed so it's reachable, dim so it asks nothing.
+        label, rank = "\033[34m✳︎ IDLE\033[0m", 5
+        age = -1
     elif status in ("done", "input") and e.get("read"):
         label, rank = "\033[34m✓︎ READ\033[0m", 3          # already visited once — quiet until it stirs again
     elif status in ("done", "input") and age >= IDLE_STALE:
@@ -426,7 +436,7 @@ sessions_sorted = sorted(by_session.keys(), key=lambda s: session_order.get(s, 1
 # `a` in the picker toggles (via SHOW_ALL_FILE, written per picker instance
 # the same way MODE_FILE is); CLAUDE_TMUX_SHOW_ALL=1 restores the old
 # always-everything behaviour as the default.
-HIDDEN_RANKS = (3, 4)
+HIDDEN_RANKS = (3, 4, 5)
 MIN_COLLAPSE = 2   # see `collapse` below — hiding one row saves zero rows
 # The pane you're standing in is never collapsed, even when it's a quiet one
 # (it usually is — visiting a pane is what marks it READ). Opening the picker
@@ -614,6 +624,7 @@ for s in sessions_sorted:
     r = sum(1 for _seq, rank, *_ in entries if rank == 2)
     d_read = sum(1 for _seq, rank, *_ in entries if rank == 3)
     stale = sum(1 for _seq, rank, *_ in entries if rank == 4)
+    idle = sum(1 for _seq, rank, *_ in entries if rank == 5)
     sid = session_order.get(s)
     sid_label = f"${sid} " if sid is not None else ""
     # Bold cyan headers vs plain, deeper-indented pane rows: the two row
@@ -629,6 +640,7 @@ for s in sessions_sorted:
         for icon, colour, n in (
             ("⏸︎", "1;31", blocked), ("✔︎", "1;32", d_unread),
             ("▶︎", "33", r), ("✓︎", "34", d_read), ("✔︎", "2", stale),
+            ("✳︎", "2", idle),
         )
         if n
     )
@@ -794,11 +806,15 @@ for s in sessions_sorted:
         # thing for it.
         kinds = []
         n_read = sum(1 for e in hideable if e[1] == 3)
-        n_stale = len(hideable) - n_read
+        n_idle = sum(1 for e in hideable if e[1] == 5)
+        n_stale = len(hideable) - n_read - n_idle
         if n_read:
             kinds.append(f"{n_read} 已读")
         if n_stale:
             kinds.append(f"{n_stale} 搁置")
+        # Never "已读": nobody has read these, and nothing has run in them.
+        if n_idle:
+            kinds.append(f"{n_idle} 闲置")
         note = f"⋯ 收起 {len(hideable)} 个({' · '.join(kinds)}) · a 展开"
         print(f"       \033[2m{note}\033[0m\t\t{s}\t-")
 PYEOF
