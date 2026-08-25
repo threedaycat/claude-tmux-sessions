@@ -46,6 +46,7 @@ Modes:
                     status-badge.sh / jump-top.sh before they read, as a
                     safety net behind the SessionEnd hook.
 """
+import re
 import sys
 import os
 import json
@@ -548,16 +549,23 @@ BADGE_STYLES = [
     ("run",   "▶︎", "#[fg=#af8700]"),
     ("read",  "✓︎", f"#[fg={DIM}]"),
     ("stale", "✔︎", f"#[fg={DIM}]"),
+    # A Claude we found ourselves rather than one a hook told us about —
+    # see discover_claude_panes. We know it's there and nothing more, so it
+    # gets Claude's own idle glyph, dimmed, and never a colour: an entry
+    # this window makes no claim on you.
+    ("idle",  "✳︎", f"#[fg={DIM}]"),
 ]
 
 # States that make no claim on you. A window with nothing but these fades
 # out entirely — name included (see render_badge).
-QUIET_STATES = {"read", "stale"}
+QUIET_STATES = {"read", "stale", "idle"}
 
 
 def badge_state(entry, now):
     """Which of the five badge states a status entry is in — the same
     branch order list-rows.sh uses to pick a row's label."""
+    if entry.get("discovered"):
+        return "idle"          # found by us, never reported by a hook
     status = entry.get("status", "running")
     if status == "blocked":
         return "wait"
@@ -754,20 +762,79 @@ def sync_window_badges():
 SHELLS = {"zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu"}
 
 
+# Claude Code sets its process title to its own version string, so a pane
+# running it reports pane_current_command as e.g. "2.1.229" — nothing else
+# on a normal box looks like that (shells, editors and git tools all report
+# a name). Paired with the status glyph Claude writes at the head of its
+# terminal title (✳ idle, ◑◐ working), that's enough to spot a Claude we
+# have no record of. A false positive costs one dim idle row; a false
+# negative is the bug this exists to fix.
+CLAUDE_CMD_RE = re.compile(r"^\d+\.\d+\.\d+")
+
+
+def looks_like_claude(cmd, title):
+    return bool(CLAUDE_CMD_RE.match(cmd or "")) or bool(
+        title and title[0] not in " -~" and not title[0].isascii()
+    )
+
+
+def discover_claude_panes(data, panes):
+    """Register live Claude panes nobody ever told us about.
+
+    Entries are only ever born from a hook firing (UserPromptSubmit / Stop
+    / Notification), which makes every gap permanent: a Claude sitting idle
+    since before the status file was last lost, or one whose session
+    predates the hooks, simply has no entry — so no badge in the window
+    list and no row in the picker — until you go and talk to it. Observed
+    on a real machine: 29 live Claude panes, 12 entries.
+
+    What we can honestly claim about a pane found this way is only "Claude
+    is here"; we have no idea whether it finished something for you or when.
+    So it goes in as a *quiet* entry (badge_state -> "idle"): visible, dim,
+    counted nowhere, nagging nobody. `read` is set for the benefit of the
+    ambient status bar, which would otherwise tally it as an unread DONE.
+    The first real hook overwrites the whole entry, discovered flag and all.
+    """
+    now = time.time()
+    for pane, info in panes.items():
+        if pane in data or not looks_like_claude(info["cmd"], info["title"]):
+            continue
+        data[pane] = {
+            "pane": pane,
+            "session": info["session"],
+            "window": info["window"],
+            "window_name": info["window_name"],
+            "pane_index": info["pane_index"],
+            "cwd": info["cwd"],
+            "status": "input",
+            "read": True,
+            "discovered": True,
+            "updated_at": now,
+        }
+
+
 def prune():
+    fields = ["pane_id", "pane_current_command", "pane_title", "session_name",
+              "window_index", "window_name", "pane_index", "pane_current_path"]
     try:
         out = subprocess.check_output(
-            ["tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}"],
+            ["tmux", "list-panes", "-a",
+             "-F", "\t".join("#{%s}" % f for f in fields)],
             stderr=subprocess.DEVNULL, text=True,
         )
     except Exception:
         return  # can't reach a tmux server — don't wipe the file blind
 
-    cmd_of = {}
+    panes = {}
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) == 2:
-            cmd_of[parts[0]] = parts[1]
+        if len(parts) == len(fields):
+            panes[parts[0]] = {
+                "cmd": parts[1], "title": parts[2], "session": parts[3],
+                "window": parts[4], "window_name": parts[5],
+                "pane_index": parts[6], "cwd": parts[7],
+            }
+    cmd_of = {p: i["cmd"] for p, i in panes.items()}
 
     def apply(data):
         # A pane id is only meaningful relative to one tmux server, and we
@@ -790,6 +857,9 @@ def prune():
         for pane in list(data):
             if pane not in cmd_of or cmd_of[pane] in SHELLS:
                 del data[pane]
+        # After the sweep, not before: a pane that just died must not be
+        # deleted and re-added in the same pass.
+        discover_claude_panes(data, panes)
 
     with_status_file(apply)
     # prune runs from status-badge.sh on every status render, which makes
