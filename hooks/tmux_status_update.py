@@ -553,7 +553,10 @@ BADGE_STYLES = [
     # see discover_claude_panes. We know it's there and nothing more, so it
     # gets Claude's own idle glyph, dimmed, and never a colour: an entry
     # this window makes no claim on you.
-    ("idle",  "✳︎", f"#[fg={DIM}]"),
+    # A dot, not ✳: ✳ is Claude's own idle glyph and the one run_spinner
+    # can borrow, so using it here made one character mean both "running"
+    # and "just sitting there". Nothing else in the set is round and small.
+    ("idle",  "·", f"#[fg={DIM}]"),
 ]
 
 # States that make no claim on you. A window with nothing but these fades
@@ -590,13 +593,22 @@ def run_spinner(pane):
     `%23` in a format is eaten by the strftime pass (it arrives at the
     comparison as `23`) and would never match `#{pane_id}`'s `%23`.
 
-    The inner test is the fallback: if the pane's title doesn't start with
-    a non-ASCII character then Claude isn't drawing a spinner there (no
-    title support, a plain shell title) and we show the static ▶ instead,
-    so this degrades on its own rather than printing a stray letter."""
+    Two tests guard the borrow, and both fall back to the static ▶:
+
+    - an ASCII first character means Claude isn't drawing a title glyph
+      there at all (no title support, a plain shell title), so borrowing
+      would print a stray letter;
+    - ✳ specifically is Claude's *idle* glyph, not a spinner frame. Its
+      title lags our status, so a pane we already know is running can still
+      be showing ✳ — borrowing it drew a gold ✳ that meant "running" while
+      a dim ✳ two windows over meant "idle", which is how one glyph came to
+      mean two opposite things. Only the moving frames (◑ ◐ …) are worth
+      borrowing; the still one is exactly what ▶ already says, better."""
     num = pane.lstrip("%")
+    glyph = "#{=1:pane_title}"
     return ("#{P:#{?#{==:#{s|^.||:pane_id}," + num + "},"
-            "#{?#{m:[ -~],#{=1:pane_title}},▶︎,#{=1:pane_title}},}}")
+            "#{?#{||:#{m:[ -~]," + glyph + "},#{==:" + glyph + ",✳}},"
+            "▶︎," + glyph + "},}}")
 
 
 def render_badge(counts, run_panes=()):
