@@ -83,19 +83,25 @@ if [ -z "$rows" ]; then
   exit 0
 fi
 
-# Default initial cursor: first pane row, skipping the leading header.
-# If this popup was opened via the tmux binding that passes CALLER_PANE
-# (the pane you were actually on when you pressed the key), and that pane
-# is itself tracked, start there instead — you want to land on "where I
-# am", not always on whatever's most urgent. fzf already starts at
-# position 1 on its own, so only add a load bind when we have somewhere
-# more useful to send it — "load" with no action is invalid.
+# Default initial cursor: the header of the session you were in, falling
+# back to the first row. Opening on CALLER_PANE's own *session* rather than
+# on the pane keeps the "where I am" anchor that made the old default worth
+# having, one level coarser to match the opening mode — press `l` and you
+# land back among that session's panes. fzf already starts at position 1 on
+# its own, so only add a load bind when we have somewhere more useful to
+# send it — "load" with no action is invalid.
 # Cursor-mode state (pane vs session) shared with skip-header.sh's
 # transform invocations, which run as separate processes per keypress and
 # so can't keep it in a variable. Scoped to this picker instance.
 MODE_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-mode.XXXXXX")"
 export MODE_FILE
-printf 'pane' > "$MODE_FILE"
+# Session mode on open, not pane mode. What the picker is *for* changed
+# when prefix+a landed: "take me to whatever needs me" no longer goes
+# through here, so opening the picker now means browsing — and browsing 29
+# panes spread over 5 sessions is a walk of 5 steps at this level instead
+# of 29 at the one below, with a session header's preview already showing
+# a card per pane in it. `l` drops into the panes, `h` comes back out.
+printf 'session' > "$MODE_FILE"
 
 # Row cache shared with skip-header.sh: its transform runs on EVERY
 # arrow keypress, and re-running list-rows.sh there (prune + two
@@ -217,7 +223,17 @@ if [ -n "${CALLER_PANE:-}" ]; then
   # would park the cursor somewhere j/k cannot return to. Opening the
   # picker from inside a teammate pane therefore falls back to the normal
   # opening position rather than to "where I am".
+  # The caller's session, asked of tmux rather than looked up in the rows:
+  # the pane you pressed the key in need not be tracked at all (a shell, an
+  # editor), and you still want to open where you are.
+  CALLER_SESSION=$(tmux display-message -p -t "$CALLER_PANE" '#{session_name}' 2>/dev/null || true)
+  # Header rows are the ones with an empty pane field; field 3 is the
+  # session they belong to.
   CALLER_POS=$(printf '%s\n' "$rows" \
+    | awk -F'\t' -v s="$CALLER_SESSION" '$2=="" && $3==s { print NR; exit }')
+  # No header for it (session not in the list) — fall back to the pane row,
+  # which is what this did before session mode became the opening mode.
+  [ -n "$CALLER_POS" ] || CALLER_POS=$(printf '%s\n' "$rows" \
     | awk -F'\t' -v p="$CALLER_PANE" '$2==p && $5!="mate" { print NR; exit }')
   export CALLER_POS
 fi
