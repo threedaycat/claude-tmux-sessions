@@ -654,7 +654,7 @@ for s in sessions_sorted:
         for icon, colour, n in (
             ("⏸︎", "1;31", blocked), ("✔︎", "1;32", d_unread),
             ("▶︎", "33", r), ("✓︎", "34", d_read), ("✔︎", "2", stale),
-            ("✳︎", "2", idle),
+            ("·", "2", idle),      # same dot the row label and the tmux badge use
         )
         if n
     )
