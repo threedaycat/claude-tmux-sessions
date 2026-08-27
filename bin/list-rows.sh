@@ -420,7 +420,7 @@ for pane, e in data.items():
     elif e.get("discovered"):
         # Claude is in that pane, that's all we know — it has never run a
         # hook for us. Listed so it's reachable, dim so it asks nothing.
-        label, rank = "\033[34m✳︎ IDLE\033[0m", 5
+        label, rank = "\033[34m·  IDLE\033[0m", 5
         age = -1
     elif status in ("done", "input") and e.get("read"):
         label, rank = "\033[34m✓︎ READ\033[0m", 3          # already visited once — quiet until it stirs again
