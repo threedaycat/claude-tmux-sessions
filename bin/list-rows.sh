@@ -66,10 +66,12 @@ if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; the
            | awk -F'\t' '(NF>=6 && $5=="extra" && $6!="") || (NF<=4 && $2=="" && $4=="")' \
            | awk -F'\t' -v keep="$extra_keep" -v all="$extra_show_all" '
                # A section label resets the per-section counter. The fold
-               # note is emitted in the label shape so the cursor treats it
-               # exactly like one — it is never a stop, and it cannot be
-               # mistaken for an item with an id.
-               function flush() { if (!all && hidden > 0) printf "  \033[2m⋯ 还有 %d 条 · a 展开\033[0m\t\t\n", hidden }
+               # note carries "-" in the row-number field, the same marker
+               # used by the collapse note on the pane side: it has no id to act on
+               # and nothing to say, so it is a stop in neither cursor mode
+               # (an empty field 4 would make session mode land on it while
+               # stepping through sections). See skip-header.sh HEADER_POS.
+               function flush() { if (!all && hidden > 0) printf "  \033[2m⋯ 还有 %d 条 · a 展开\033[0m\t\t\t-\n", hidden }
                (NF<=4 && $2=="" && $4=="") { flush(); hidden=0; n=0; print; next }
                { if (all == "1" || n < keep) { n++; print } else hidden++ }
                END { flush() }' \
