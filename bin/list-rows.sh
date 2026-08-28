@@ -349,11 +349,6 @@ def fmt_age(rank, secs):
     RUN = since the prompt was submitted (how long it's been running),
     WAIT = since the permission prompt appeared, DONE = since it
     finished (both the unread DONE and the already-seen READ)."""
-    # Discovered panes (see discover_claude_panes) carry no usable
-    # timestamp — we found them, nobody reported them, and inventing
-    # "0秒前" would read as "just finished", which is exactly wrong.
-    if secs < 0:
-        return "无交互记录"
     secs = max(0, int(secs))
     if secs < 60:
         d = f"{secs}秒"
@@ -406,7 +401,14 @@ by_session = defaultdict(list)
 # team is "in" whichever session its members turned up in.
 teams_in_session = defaultdict(set)
 for pane, e in data.items():
-    if pane not in live or e.get("archived"):
+    # `discovered` panes exist to fill the gaps in the *window list* badges
+    # (see discover_claude_panes) — that was the whole ask. Giving them rows
+    # here was a side effect, and it cost: a dozen extra entries whose only
+    # claim is "a Claude lives here", padding the collapse counts and the
+    # header tallies in the one list whose first job is switching between
+    # the Claudes you actually talk to. They come back the moment one runs
+    # a hook, which is also the moment there's anything to say about it.
+    if pane not in live or e.get("archived") or e.get("discovered"):
         continue
     _, session, win_idx, window_name, pane_idx, cwd, pane_title = live[pane]
     member = members_by_pane.get(pane)
@@ -417,11 +419,6 @@ for pane, e in data.items():
     status = e.get("status", "running")
     if status == "blocked":
         label, rank = "\033[1;31m⏸︎ WAIT\033[0m", -1   # permission choice — top priority, notified
-    elif e.get("discovered"):
-        # Claude is in that pane, that's all we know — it has never run a
-        # hook for us. Listed so it's reachable, dim so it asks nothing.
-        label, rank = "\033[34m·  IDLE\033[0m", 5
-        age = -1
     elif status in ("done", "input") and e.get("read"):
         label, rank = "\033[34m✓︎ READ\033[0m", 3          # already visited once — quiet until it stirs again
     elif status in ("done", "input") and age >= IDLE_STALE:
@@ -450,7 +447,7 @@ sessions_sorted = sorted(by_session.keys(), key=lambda s: session_order.get(s, 1
 # `a` in the picker toggles (via SHOW_ALL_FILE, written per picker instance
 # the same way MODE_FILE is); CLAUDE_TMUX_SHOW_ALL=1 restores the old
 # always-everything behaviour as the default.
-HIDDEN_RANKS = (3, 4, 5)
+HIDDEN_RANKS = (3, 4)
 MIN_COLLAPSE = 2   # see `collapse` below — hiding one row saves zero rows
 # The pane you're standing in is never collapsed, even when it's a quiet one
 # (it usually is — visiting a pane is what marks it READ). Opening the picker
@@ -638,7 +635,6 @@ for s in sessions_sorted:
     r = sum(1 for _seq, rank, *_ in entries if rank == 2)
     d_read = sum(1 for _seq, rank, *_ in entries if rank == 3)
     stale = sum(1 for _seq, rank, *_ in entries if rank == 4)
-    idle = sum(1 for _seq, rank, *_ in entries if rank == 5)
     sid = session_order.get(s)
     sid_label = f"${sid} " if sid is not None else ""
     # Bold cyan headers vs plain, deeper-indented pane rows: the two row
@@ -654,7 +650,6 @@ for s in sessions_sorted:
         for icon, colour, n in (
             ("⏸︎", "1;31", blocked), ("✔︎", "1;32", d_unread),
             ("▶︎", "33", r), ("✓︎", "34", d_read), ("✔︎", "2", stale),
-            ("·", "2", idle),      # same dot the row label and the tmux badge use
         )
         if n
     )
@@ -741,10 +736,11 @@ for s in sessions_sorted:
             trailing = member_tail(member, counts_of.get(member["team"], {}))
         else:
             name_cell = col(wname, NAME_W)
-            # Clipped, because an opening ask has no length limit and this
-            # field runs to the end of the line: one pasted paragraph would
-            # push every row into a wrap. cwd stays reachable in the preview.
-            trailing = clip(task_of.get(pane, ""), 56)
+            # Short on purpose. This field only has to break the tie when
+            # the name column doesn't tell you which Claude this is; at 56
+            # it stopped being a hint and became the widest thing on the
+            # row, which is backwards in a list you read by name.
+            trailing = clip(task_of.get(pane, ""), 30)
         # Dim number gutter — the digits you press to jump straight here.
         # Three wide, not two: with 100 panes a 2-wide field silently drops
         # the leading digit *and* shifts every column on that row.
@@ -823,15 +819,11 @@ for s in sessions_sorted:
         # thing for it.
         kinds = []
         n_read = sum(1 for e in hideable if e[1] == 3)
-        n_idle = sum(1 for e in hideable if e[1] == 5)
-        n_stale = len(hideable) - n_read - n_idle
+        n_stale = len(hideable) - n_read
         if n_read:
             kinds.append(f"{n_read} 已读")
         if n_stale:
             kinds.append(f"{n_stale} 搁置")
-        # Never "已读": nobody has read these, and nothing has run in them.
-        if n_idle:
-            kinds.append(f"{n_idle} 闲置")
         note = f"⋯ 收起 {len(hideable)} 个({' · '.join(kinds)}) · a 展开"
         print(f"       \033[2m{note}\033[0m\t\t{s}\t-")
 PYEOF
