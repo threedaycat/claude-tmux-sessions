@@ -49,9 +49,30 @@ if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; the
   #   item   >=6 fields, field 5 == "extra", field 6 a non-empty id
   #   label  <=4 fields, empty pane id and empty row number — a section
   #          title; the cursor treats it exactly like a session header
+  # Folded by default, and this is the fourth property the block has to
+  # guarantee. A provider has no reason to bound what it returns — a real
+  # one here answers with 400 unanswered messages — and every one of those
+  # rows lands *above* the panes, so the list whose first job is switching
+  # between Claudes opened onto four hundred lines of something else. Show
+  # the first few of each section, then say how many are left. `a` (the
+  # same key that unfolds read panes) shows the lot.
+  extra_keep="${CLAUDE_TMUX_EXTRA_KEEP:-5}"
+  extra_show_all="${CLAUDE_TMUX_SHOW_ALL:-0}"
+  if [ -n "${CLAUDE_TMUX_SHOW_ALL_FILE:-}" ] && [ -r "${CLAUDE_TMUX_SHOW_ALL_FILE}" ]; then
+    extra_show_all="$(cat "${CLAUDE_TMUX_SHOW_ALL_FILE}" 2>/dev/null || echo 0)"
+  fi
   extra="$(run_with_deadline "${CLAUDE_TMUX_EXTRA_TIMEOUT:-2}" \
              "$CLAUDE_TMUX_EXTRA_CMD" list 2>/dev/null \
            | awk -F'\t' '(NF>=6 && $5=="extra" && $6!="") || (NF<=4 && $2=="" && $4=="")' \
+           | awk -F'\t' -v keep="$extra_keep" -v all="$extra_show_all" '
+               # A section label resets the per-section counter. The fold
+               # note is emitted in the label shape so the cursor treats it
+               # exactly like one — it is never a stop, and it cannot be
+               # mistaken for an item with an id.
+               function flush() { if (!all && hidden > 0) printf "  \033[2m⋯ 还有 %d 条 · a 展开\033[0m\t\t\n", hidden }
+               (NF<=4 && $2=="" && $4=="") { flush(); hidden=0; n=0; print; next }
+               { if (all == "1" || n < keep) { n++; print } else hidden++ }
+               END { flush() }' \
            || true)"
   [ -n "$extra" ] && printf '%s\n' "$extra"
 fi
@@ -220,6 +241,47 @@ def col(s, width):
 
 NAME_W = 24   # window name
 AGE_W = 17    # "完成 999.9小时前" is 16 cells; 17 keeps the separator
+
+
+def task_width():
+    """How many columns the trailing task line may use.
+
+    Derived rather than fixed, because the two constants that decide it —
+    how wide the popup is and how much of that the preview takes — are both
+    the user's to change, and a hardcoded clip is wrong the moment either
+    moves. At 85%x65% with a 50% preview the list pane is ~98 columns and
+    the fixed part of a row (number, label, name, age) eats 56 of them, so
+    a fixed 30 was leaving real estate on the floor; widen the popup and it
+    would have kept leaving more.
+
+    stdout is a pipe (the picker captures these rows), so the size has to
+    come from the controlling terminal, which inside the popup *is* the
+    popup. Falls back to a conservative width when there's no tty at all —
+    piped runs, tests, the overview page building its own cards."""
+    cols = 0
+    try:
+        with open("/dev/tty") as tty:
+            cols = os.get_terminal_size(tty.fileno()).columns
+    except Exception:
+        cols = 0
+    if not cols:
+        try:
+            cols = int(os.environ.get("CLAUDE_TMUX_COLS") or 0)
+        except ValueError:
+            cols = 0
+    if not cols:
+        return 40
+    try:
+        preview = int(os.environ.get("CLAUDE_TMUX_PREVIEW_WIDTH") or 50)
+    except ValueError:
+        preview = 50
+    list_pane = cols * (100 - min(max(preview, 0), 95)) // 100
+    # 7 number + 6 label + 2 gap + NAME_W + AGE_W, then fzf's own gutter.
+    fixed = 7 + 6 + 2 + NAME_W + AGE_W + 3
+    return max(30, min(90, list_pane - fixed))
+
+
+TASK_W = task_width()
 
 
 def tilde(path):
@@ -736,11 +798,8 @@ for s in sessions_sorted:
             trailing = member_tail(member, counts_of.get(member["team"], {}))
         else:
             name_cell = col(wname, NAME_W)
-            # Short on purpose. This field only has to break the tie when
-            # the name column doesn't tell you which Claude this is; at 56
-            # it stopped being a hint and became the widest thing on the
-            # row, which is backwards in a list you read by name.
-            trailing = clip(task_of.get(pane, ""), 30)
+            # As wide as the row actually has room for — see task_width().
+            trailing = clip(task_of.get(pane, ""), TASK_W)
         # Dim number gutter — the digits you press to jump straight here.
         # Three wide, not two: with 100 panes a 2-wide field silently drops
         # the leading digit *and* shifts every column on that row.
