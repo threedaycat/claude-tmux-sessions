@@ -79,7 +79,7 @@ means you can read the list without relying on it.
   them can miss you.
 - **One key to the right pane.** `prefix + g` opens an `fzf` list of every
   tracked pane, grouped by session, with a live preview that follows the cursor.
-  `Enter` jumps. Or skip the UI entirely: `prefix + W` goes straight to whichever
+  `Enter` jumps. Or skip the UI entirely: `prefix + a` goes straight to whichever
   pane needs you most.
 - **Type-the-number jumps.** Press a row's number to go there. Two-digit rows
   work too (`1` then `2` → pane 12), and single digits still fire instantly when
@@ -146,8 +146,8 @@ configs vary. In `~/.tmux.conf` (or `~/.tmux.conf.local` if you use
 # prefix + g → the picker, cursor starting on the pane you're currently in
 bind g run-shell 'tmux display-popup -w 95% -h 85% -E "CALLER_PANE=#{pane_id} ~/.claude/hooks/claude-tmux-picker.sh"'
 
-# prefix + W → jump straight to whichever pane needs you most, no picker
-bind W run-shell '~/.claude/hooks/jump-top.sh'
+# prefix + a → jump straight to whichever pane needs you most, no picker
+bind a run-shell '~/.claude/hooks/jump-top.sh'
 ```
 
 Reload with `tmux source-file ~/.tmux.conf`. Then run `/hooks` once in any
@@ -204,7 +204,7 @@ set-hook -g pane-focus-in 'run-shell -b "python3 ~/.claude/hooks/tmux_status_upd
 ```
 
 Without it, `read` is only set when you arrive through the picker or
-`prefix + W`, so a window you switched to and read stays a bright unread `✔`.
+`prefix + a`, so a window you switched to and read stays a bright unread `✔`.
 `mark-seen` is deliberately gentler than `mark-read`: it leaves `blocked` panes
 alone, so cycling past a window can't silently dismiss a WAIT alert.
 

@@ -185,7 +185,7 @@ several ways at once — because any single channel can miss:
   loud white-on-red `⏸ WAIT` chip — with the window's name and how long it's
   been waiting — into the status line whenever any pane is blocked *and unread*.
   Unlike a passing flash it re-renders on every status refresh, so it **stays
-  put until you deal with it**. You dismiss it by going there: `prefix + W` or
+  put until you deal with it**. You dismiss it by going there: `prefix + a` or
   the picker jumps to the pane and marks it read, dropping it from the banner. A
   fresh permission prompt overwrites the entry, clears `read`, and it comes back.
 - **Sound**: `afplay` on a system sound the moment it goes blocked — rings
@@ -201,7 +201,7 @@ several ways at once — because any single channel can miss:
 
 ## The read / archive inbox model
 
-- Jumping to a `DONE` pane (via the picker or `prefix + W`, both call
+- Jumping to a `DONE` pane (via the picker or `prefix + a`, both call
   `mark-read`) flips it to `READ` — an idle Claude you've already looked at (e.g.
   right after a `/clear`) has nothing new to say, so it shouldn't keep flagging
   you. The overwrite-on-status-change behavior means it naturally goes back to

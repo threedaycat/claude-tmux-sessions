@@ -345,7 +345,7 @@ def tmux_flash(session_name, window_name, pane, action=None):
     macOS notification covers the you're-in-another-app case; this covers
     full-screen terminal / Do Not Disturb). Skips any client currently
     looking at the notifying pane — the permission prompt itself is
-    already on that screen. `prefix W` (jump-top) then jumps straight to
+    already on that screen. `prefix a` (jump-top) then jumps straight to
     it, since `blocked` ranks first there."""
     try:
         clients = subprocess.check_output(
@@ -360,7 +360,7 @@ def tmux_flash(session_name, window_name, pane, action=None):
     # line is dropped entirely — window name plus "what it wants" is what
     # makes it decidable without switching.
     what = f" — {_shorten(action, 60)}" if action else ""
-    msg = f"● 等你确认 · {session_name} · {window_name}{what} — prefix W 跳转"
+    msg = f"● 等你确认 · {session_name} · {window_name}{what} — prefix a 跳转"
     for client in clients:
         try:
             active = subprocess.check_output(
@@ -673,7 +673,7 @@ def watched_panes():
 
 def mark_watched_read(data):
     """Reading a pane's output *is* reading it. Until this existed, `read`
-    only got set by the picker and `prefix W` — so a pane you simply
+    only got set by the picker and `prefix a` — so a pane you simply
     switched to and read stayed a bright unread DONE, which is exactly the
     nagging the inbox model is supposed to remove.
 
