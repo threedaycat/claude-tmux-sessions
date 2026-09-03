@@ -87,7 +87,7 @@ for pane, e in data.items():
         continue
     status = e.get("status", "running")
     age = int(now - e.get("updated_at", now))
-    # blocked respects `read` too: jumping to a blocked pane (prefix W /
+    # blocked respects `read` too: jumping to a blocked pane (prefix a /
     # the picker, both call mark-read) is how you dismiss its alert, so an
     # already-visited one shouldn't keep sounding the banner. A fresh
     # permission prompt overwrites the entry and clears read, re-alerting.

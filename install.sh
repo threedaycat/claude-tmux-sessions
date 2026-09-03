@@ -86,9 +86,9 @@ cat <<'EOF'
 如果 Claude Code 会话已经在跑，需要在里面执行一次 /hooks 让新 hook 生效
 （已存在的会话不会自动感知刚写入的 settings.json）。
 
-可选：不打开 picker，直接跳到最需要处理的 pane（bind 到比如 prefix+W）：
+可选：不打开 picker，直接跳到最需要处理的 pane（bind 到比如 prefix+a）：
 
-    bind W run-shell '~/.claude/hooks/jump-top.sh'
+    bind a run-shell '~/.claude/hooks/jump-top.sh'
 
 可选：在 tmux 状态栏里常驻显示未处理数量（把这段拼进你的 status-right）：
 
@@ -104,7 +104,7 @@ cat <<'EOF'
 tmux_conf_theme_window_status_format 和 ..._current_format。
 渲染时不起进程：hooks 直接把 badge 写进窗口选项。
 
-配套加上这条 hook，让「切到一个窗口」就算看过了（否则 read 只有 picker 和 prefix+W
+配套加上这条 hook，让「切到一个窗口」就算看过了（否则 read 只有 picker 和 prefix+a
 会设，你切过去看过了，状态栏还在拿绿色催你）。它不动 blocked 的 pane —— 顺手划过一个
 窗口不该把 WAIT 告警消掉：
 

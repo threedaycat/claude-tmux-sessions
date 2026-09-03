@@ -68,7 +68,7 @@
   `⏸ WAIT`(带窗口名和已等时长),而且**每次刷新都重画,直到你去处理掉它**。另外还有一次性
   的闪屏、提示音和 macOS 通知 —— 三条通道,因为任何单独一条都可能漏掉你。
 - **一个键到该去的 pane。** `prefix + g` 唤出所有被追踪 pane 的 `fzf` 列表,按 session
-  分组,带跟随光标的实时预览,`Enter` 跳转。或者干脆跳过界面:`prefix + W` 直接送你到最该
+  分组,带跟随光标的实时预览,`Enter` 跳转。或者干脆跳过界面:`prefix + a` 直接送你到最该
   被处理的那个 pane。
 - **输编号直接跳。** 按行号即到。两位数也行(`1` 再 `2` → 第 12 行),而个位数在不可能构成
   更大编号的时候依然是即时跳转。
@@ -123,8 +123,8 @@ Claude Code。可选装 [terminal-notifier](https://github.com/julienXX/terminal
 # prefix + g → 唤出 picker,光标停在你当前所在的 pane
 bind g run-shell 'tmux display-popup -w 95% -h 85% -E "CALLER_PANE=#{pane_id} ~/.claude/hooks/claude-tmux-picker.sh"'
 
-# prefix + W → 不看界面,直接跳到最该被处理的那个 pane
-bind W run-shell '~/.claude/hooks/jump-top.sh'
+# prefix + a → 不看界面,直接跳到最该被处理的那个 pane
+bind a run-shell '~/.claude/hooks/jump-top.sh'
 ```
 
 用 `tmux source-file ~/.tmux.conf` 重载。然后在任意一个**已经在跑的** Claude Code session
@@ -174,7 +174,7 @@ team)时后面跟数字:
 set-hook -g pane-focus-in 'run-shell -b "python3 ~/.claude/hooks/tmux_status_update.py mark-seen #{pane_id}"'
 ```
 
-不加的话,`read` 只有走 picker 或 `prefix + W` 才会被设上,于是你明明切过去看过了,状态栏
+不加的话,`read` 只有走 picker 或 `prefix + a` 才会被设上,于是你明明切过去看过了,状态栏
 还在拿绿色的 `✔` 催你。`mark-seen` 比 `mark-read` 手轻:它**不动** `blocked` 的 pane ——
 顺手划过一个窗口,不该把 WAIT 告警消掉。
 
