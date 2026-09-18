@@ -54,6 +54,11 @@ ensure_hook("Stop",
             "python3 ~/.claude/hooks/tmux_status_update.py done 2>/dev/null || true")
 ensure_hook("Notification",
             "python3 ~/.claude/hooks/tmux_status_update.py notify 2>/dev/null || true")
+# 一个工具真的跑起来了，说明那个权限确认已经被回答掉了 —— 这是「不再 blocked」
+# 唯一的即时信号。它每次工具调用都会触发，所以 unblock 走的是只读快路径：
+# 这个 pane 不是 blocked 就立刻退出，不写盘也不刷 badge。
+ensure_hook("PostToolUse",
+            "python3 ~/.claude/hooks/tmux_status_update.py unblock 2>/dev/null || true")
 ensure_hook("SessionEnd",
             "python3 ~/.claude/hooks/tmux_status_update.py clear 2>/dev/null || true")
 
