@@ -16,6 +16,11 @@ Modes:
                       idle_prompt / anything else -> "input" (Claude
                         finished and is just waiting on the next message —
                         worth a glance, not urgent, no notification)
+  unblock           called by the PostToolUse hook. A tool actually ran,
+                    so whatever the pane was blocked on has been answered.
+                    Cheap by design: it only writes when this pane is
+                    currently "blocked" — see the function for why that
+                    matters on a hook that fires after every tool call.
   mark-read <pane>  called by claude-tmux-picker.sh right after it jumps to
                     <pane>, so a "done" pane the user has actually visited
                     once shows as already-seen instead of unread.
@@ -448,6 +453,47 @@ def record_notification():
     # not urgent.
     status = "blocked" if stdin_data.get("notification_type") == "permission_prompt" else "input"
     record_status(status, stdin_data)
+
+
+def unblock():
+    """A tool ran, so the permission prompt it was waiting on got answered.
+
+    `blocked` is written by the Notification hook and, before this, was only
+    ever cleared by the *next* UserPromptSubmit or Stop. Answering the prompt
+    in place is neither: you approve, Claude carries on for another ten
+    minutes, and the red WAIT in the status bar keeps insisting it's still
+    waiting on you. `mark-seen` won't clear it either — deliberately, since
+    cycling past a window must not dismiss an alert — so the only way out
+    was to press the jump key you no longer had any reason to press.
+
+    PostToolUse is the first thing that happens after an approval, which is
+    why it's the signal. It also fires after every *other* tool call, which
+    is why this is its own verb instead of reusing `running`: it reads the
+    status file and returns on the spot unless this pane is blocked. No
+    tmux subprocess, no write, no badge sync on the hot path — the only
+    cost a normal tool call pays is starting Python.
+    """
+    pane = os.environ.get("TMUX_PANE")
+    if not pane:
+        return
+    try:
+        with open(STATUS_FILE) as f:
+            data = json.load(f)
+    except Exception:
+        return
+    if (data.get(pane) or {}).get("status") != "blocked":
+        return
+
+    def apply(data):
+        # Re-checked under the lock: the read above was unlocked, and Stop
+        # may have overwritten the entry in between.
+        e = data.get(pane)
+        if e and e.get("status") == "blocked":
+            e["status"] = "running"
+            e["updated_at"] = time.time()
+
+    with_status_file(apply)
+    sync_window_badges()
 
 
 def mark_read(pane):
@@ -894,6 +940,8 @@ def main():
         record_status(mode, stdin_data)
     elif mode == "notify":
         record_notification()
+    elif mode == "unblock":
+        unblock()
     elif mode == "mark-read" and len(sys.argv) == 3:
         mark_read(sys.argv[2])
     elif mode == "mark-seen" and len(sys.argv) == 3:

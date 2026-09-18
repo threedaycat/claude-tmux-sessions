@@ -24,6 +24,15 @@ Claude Code hooks are the only writers:
     status that notifies** (see below).
   - anything else (`idle_prompt`, unrecognized) → `input` — Claude's done and
     just waiting on your next message. Worth a glance, not urgent.
+- A `PostToolUse` hook clears `blocked` back to `running`. Nothing else can:
+  answering a permission prompt in place is neither a `UserPromptSubmit` nor a
+  `Stop`, so before this the WAIT alert survived the approval and kept burning
+  red until Claude's turn happened to end — or until you pressed the jump key
+  you no longer needed. A tool running *is* the approval, one event later.
+  Because this hook also fires after every other tool call, `unblock` is a
+  separate verb from `running`: it reads the status file and returns unless
+  this pane is blocked, so the hot path costs one Python start and nothing else
+  (measured 29ms, against 51ms for a `running` write).
 - A `SessionEnd` hook deletes the pane's entry when Claude Code exits. Without
   it, quitting Claude and resuming in a *different* pane of the same window
   would leave the old entry behind (the old pane is still alive, so a liveness

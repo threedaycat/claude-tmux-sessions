@@ -308,6 +308,7 @@ pane id 做 key:
 | `UserPromptSubmit` | `running` |
 | `Stop` | `done` |
 | `Notification` | `blocked`(权限确认)或 `input`(空闲)—— hook 读通知类型来区分 |
+| `PostToolUse` | 把 `blocked` 抹成 `running` —— 工具跑起来了,说明那个确认已经被回答掉 |
 | `SessionEnd` | 删除该条目 |
 
 每个读取方都会先拿 `tmux list-panes -a` 把这个文件*剪一遍*,所以关掉的 pane —— 以及

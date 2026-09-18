@@ -379,6 +379,7 @@ tmux pane id:
 | `UserPromptSubmit` | `running` |
 | `Stop` | `done` |
 | `Notification` | `blocked` (a `permission_prompt`) or `input` (idle) — the hook reads the notification type to tell them apart |
+| `PostToolUse` | clears `blocked` → `running`. A tool ran, so the prompt got answered |
 | `SessionEnd` | deletes the entry |
 
 Every reader first *prunes* that file against `tmux list-panes -a`, so closed
