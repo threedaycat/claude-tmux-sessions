@@ -198,6 +198,19 @@ set -g window-status-format '#I#{E:@claude_win} #{s|^[^ -~] ||:window_name}'
 匹配,所以中文窗口名不会被误伤。别用 `{1,4}` 这类量词:里面的 `}` 会把 `#{...}` 提前闭合,
 整段格式当场失效,而且不报错。
 
+**给没起名的会话一个短的功能名。** Claude 自己的标题是第一句话 —— 往往是个问句、一句话长,
+而且之后不再更新。同一个项目开好几个 Claude 时,真正分得开它们的是「各自在做哪块功能」。
+所以对没 `/rename` 过的会话,`bin/session_label.py` 会在后台让 haiku 从整个会话里均匀抽样
+你说过的话,起一个 2–6 字(或 1–3 个英文词)的名字,按会话 id 缓存在
+`~/.claude/tmux-claude-labels.json`。起一次就固定,只有起名时会话还很短、之后长到 4 倍大
+才重起一次。picker 的名字列会用它,它也会写进 pane 选项 `@claude_label`,窗口名想用的话:
+
+```tmux
+set -g window-status-format '#I#{E:@claude_win} #{?#{@claude_label},#{@claude_label},#{s|^[^ -~] ||:window_name}}'
+```
+
+你起的名永远优先;换模型用 `CLAUDE_TMUX_LABEL_MODEL`。
+
 ### 确认装好了
 
 在 tmux 里的任意一个 Claude Code pane 发一条消息,然后:

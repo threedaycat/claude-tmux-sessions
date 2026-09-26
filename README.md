@@ -232,6 +232,23 @@ The substitution drops *one* leading non-ASCII character plus its space — tmux
 reach for a `{1,4}`-style quantifier: the `}` closes the `#{...}` and the whole
 format silently falls apart.
 
+**A short feature name for sessions nobody named.** Claude's own title is the
+opening ask — often a question, a sentence long, and never updated. With several
+Claude sessions in one project, what tells them apart is which feature each one
+is building. So for every session without a `/rename`, `bin/session_label.py`
+asks haiku in the background, from messages sampled across the whole session,
+for a 2–6 character (or 1–3 word) name, cached by session id in
+`~/.claude/tmux-claude-labels.json`. A name is decided once and kept; it is only
+redone if the session was still young when named and has since grown fourfold.
+The picker's name column uses it, and it is written to the pane option
+`@claude_label` for window names:
+
+```tmux
+set -g window-status-format '#I#{E:@claude_win} #{?#{@claude_label},#{@claude_label},#{s|^[^ -~] ||:window_name}}'
+```
+
+A name you chose always wins; set `CLAUDE_TMUX_LABEL_MODEL` to use another model.
+
 ### Check it's working
 
 In any Claude Code pane inside tmux, send a prompt, then:

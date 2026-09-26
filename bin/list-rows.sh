@@ -153,6 +153,19 @@ if bin_dir and os.path.isdir(os.path.join(_claude_home, "projects")):
     except Exception:
         task_of = {}           # a broken read means "no tasks", never a broken list
 
+# Level 3 of the naming chain: a short generated name for every session
+# nobody named by hand (see session_label.py). Reads a cache only; sessions
+# without a name yet get one from a background worker, in time for the next
+# render. Same gate and same failure rule as the task field above.
+label_of = {}
+if bin_dir and os.path.isdir(os.path.join(_claude_home, "projects")):
+    try:
+        sys.path.insert(0, bin_dir)
+        import session_label
+        label_of = session_label.labels(data, skip=set(manual_names))
+    except Exception:
+        label_of = {}          # a broken read means "no generated names", never a broken list
+
 fmt = ("#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}"
        "\t#{pane_index}\t#{pane_current_path}\t#{pane_title}")
 try:
@@ -350,7 +363,7 @@ def safe_title(title):
 def display_name(pane, rec, window_name, pane_title, member):
     """What to call this pane in the name column, best source first.
 
-    Five levels. Each one falls through for a *different* reason, which is
+    Six levels. Each one falls through for a *different* reason, which is
     what makes this a chain rather than a couple of branches:
 
       1. a hand-picked session name — the only source where somebody stated
@@ -362,17 +375,21 @@ def display_name(pane, rec, window_name, pane_title, member):
          nobody renamed, which is most of them — a *generated* name is
          deliberately not accepted here.
       2. the team roster's name — the only source that says *who* a pane
-         is. Teammates only: a lead's row keeps falling through to level 3,
+         is. Teammates only: a lead's row keeps falling through to levels 3-4,
          because its `pane_title` is the session summary and its roster name
          is its agent type, which is the same word on every team's lead. So
          the more informative source is the lower one, exactly the case this
          level exists to catch in the other direction.
-      3. pane_title — per-pane and clean. Falls through when empty, or when
+      3. a generated name — a few characters saying which feature the
+         session works on, sampled from the whole session and then frozen
+         (session_label.py). Falls through until the background worker has
+         produced one, and never answers for a hand-named session.
+      4. pane_title — per-pane and clean. Falls through when empty, or when
          it's really the shell's default (see safe_title).
-      4. window_name — the old source. Several Claude panes sharing one
+      5. window_name — the old source. Several Claude panes sharing one
          tmux window all write to it, so it arrives as their titles
          concatenated in an order none of them agree on.
-      5. the session id, shortened — falls through to the pane id.
+      6. the session id, shortened — falls through to the pane id.
 
     Levels 1 and 2 can in principle both answer; a hand-picked name wins
     because it is chosen later than the roster name, which is fixed when a
@@ -381,11 +398,11 @@ def display_name(pane, rec, window_name, pane_title, member):
 
     Level 2 subsumes "is this pane on a team": a roster hit *is*
     membership, so nothing tests for it separately. The lead needs no
-    special case either — it falls to level 3, and its pane_title is the
+    special case either — it falls to levels 3-4, and its pane_title is the
     session summary, which is exactly what its row should say. A branch for
     the lead would replace a right answer with a bespoke one.
 
-    Level 5's only job is to guarantee this function has no path that
+    Level 6's only job is to guarantee this function has no path that
     returns an empty string; a row with an ugly name is recoverable, a row
     with no name is not. It prefers the session id because that survives
     what a pane id doesn't — a tmux server restart renumbers every pane,
@@ -399,7 +416,8 @@ def display_name(pane, rec, window_name, pane_title, member):
     if member and member.get("is_mate") and member.get("name"):
         return member["name"]
     return (
-        safe_title(pane_title)
+        label_of.get(pane, "")
+        or safe_title(pane_title)
         or (window_name or "").strip()
         or (rec.get("session_id") or "")[:8]
         or pane

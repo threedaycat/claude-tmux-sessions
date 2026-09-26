@@ -136,6 +136,24 @@ def manual_names():
     return _MANUAL_NAMES
 
 
+_GENERATED = None
+
+
+def generated_names():
+    """Level 3: {session_id: generated name}, read from session_label.py's
+    cache only — this never starts the worker; list-rows.sh does that."""
+    global _GENERATED
+    if _GENERATED is None:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import session_label
+            _GENERATED = {sid: r["label"] for sid, r in session_label._load().items()
+                          if isinstance(r, dict) and r.get("label")}
+        except Exception:
+            _GENERATED = {}
+    return _GENERATED
+
+
 def display_name(pane, rec, window_name, pane_title, member):
     """The name for a pane, best source first — see list-rows.sh for the
     full reasoning. Kept in step with it so a pane is called the same thing
@@ -149,7 +167,8 @@ def display_name(pane, rec, window_name, pane_title, member):
     if member and member.get("is_mate") and member.get("name"):
         return member["name"]
     return (
-        safe_title(pane_title)
+        generated_names().get((rec.get("session_id") or "").strip(), "")
+        or safe_title(pane_title)
         or (window_name or "").strip()
         or (rec.get("session_id") or "")[:8]
         or pane
