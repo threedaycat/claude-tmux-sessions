@@ -3,7 +3,7 @@
 
     usage-refresh.py            refresh if the last reading is older than the interval
     usage-refresh.py --force    refresh now (the status-bar click)
-    usage-refresh.py --notify [--client C]   also flash the result on client C
+    usage-refresh.py --notify [--client C]   then show the numbers in a card on client C
 
 Why this exists: the status bar used to read only Claude Code's own cache
 (cachedUsageUtilization in ~/.claude.json), which moves when Claude Code
@@ -45,6 +45,7 @@ LIVE_FILE = os.path.join(HOME, ".claude", "tmux-usage-live.json")
 LOCK_FILE = LIVE_FILE + ".lock"
 URL = "https://api.anthropic.com/api/oauth/usage"
 INTERVAL = 60 * int(os.environ.get("CLAUDE_TMUX_USAGE_REFRESH_MIN") or 30)
+FORCE_GAP = 20            # seconds between two forced (clicked) refreshes
 WINDOWS = ("five_hour", "seven_day")
 
 
@@ -118,6 +119,64 @@ def reset_str(iso):
     return dt.strftime("%H:%M" if dt.date() == today else "%m-%d %H:%M")
 
 
+def until_str(iso):
+    """'2 小时 13 分' / '6 天 18 小时' until the reset."""
+    from datetime import datetime
+    try:
+        left = (datetime.fromisoformat(iso).astimezone()
+                - datetime.now().astimezone()).total_seconds()
+    except Exception:
+        return "?"
+    if left <= 0:
+        return "已经"
+    d, rem = divmod(int(left), 86400)
+    h, rem = divmod(rem, 3600)
+    m = rem // 60
+    if d:
+        return f"{d} 天 {h} 小时"
+    if h:
+        return f"{h} 小时 {m} 分"
+    return f"{m} 分钟"
+
+
+def show_card(usage, err, live, note=None):
+    """The answer to the click, as a small tmux menu at the bottom right:
+    both windows' usage and how long until each resets, spelled out. A menu
+    rather than a status-line message because a message is one grey line
+    that is gone in 3s; a menu stays until you click elsewhere or press a key.
+    On failure the title says so and the last good reading is shown."""
+    data = usage or {w: live.get(w) for w in WINDOWS}
+    if usage:
+        title = f" Claude 额度 · {time.strftime('%H:%M')} 刷新 "
+    elif note:
+        at = time.strftime("%H:%M", time.localtime((live.get("fetched_at_ms") or 0) / 1000))
+        title = f" Claude 额度 · {at} 的数据（{note}）"
+    else:
+        title = " 没刷新成功：" + (err or "未知原因") + " "
+    items = []
+    for label, w in (("5 小时", "five_hour"), ("7 天", "seven_day")):
+        u = data.get(w) or {}
+        if u.get("utilization") is None:
+            items += [f"{label}   没有数据", "", ""]
+            continue
+        items += [f"{label}   已用 {round(u['utilization'])}%", "", ""]
+        items += [f"      {until_str(u.get('resets_at'))}后重置（{reset_str(u.get('resets_at'))}）", "", ""]
+        items += [""]                                   # separator
+    if items and items[-1] == "":
+        items.pop()
+    # Run from `run-shell -b` there is no "current client" — the click
+    # passes its own along, or the menu has nowhere to appear.
+    # -M: a menu opened from a shell has no mouse event behind it, and tmux
+    # then flags it MENU_NOMOUSE (cmd-display-menu.c) — clicks on and around
+    # it stop behaving like a menu. Cancelling it with the mouse kept
+    # re-triggering the refresh. -M turns normal mouse handling back on:
+    # a click outside closes it, like any menu.
+    cmd = ["tmux", "display-menu", "-M", "-x", "R", "-y", "S", "-T", title]
+    if "--client" in sys.argv:
+        cmd[2:2] = ["-c", sys.argv[sys.argv.index("--client") + 1]]
+    subprocess.run(cmd + ["--"] + items, capture_output=True)
+
+
 def main():
     force = "--force" in sys.argv
     notify = "--notify" in sys.argv
@@ -131,6 +190,14 @@ def main():
         live = load(LIVE_FILE)
         last = max(live.get("fetched_at_ms") or 0, live.get("attempted_at_ms") or 0)
         if not force and now_ms - last < INTERVAL * 1000:
+            return
+        # Even a click can't hit the endpoint more than once per FORCE_GAP:
+        # whatever re-fires it (a stuck click, a menu bug — both happened),
+        # it must not turn into a burst that gets the account rate-limited.
+        # Within the gap a click still gets its card, with the last reading.
+        if force and now_ms - (live.get("attempted_at_ms") or 0) < FORCE_GAP * 1000:
+            if notify:
+                show_card(None, None, live, note="刚刚刷新过")
             return
         live["attempted_at_ms"] = now_ms
         # Visible while the ~2s request runs: status-badge shows "⟳ 刷新中"
@@ -152,22 +219,7 @@ def main():
 
     subprocess.run(["tmux", "refresh-client", "-S"], capture_output=True)
     if notify:
-        if usage:
-            # The bar only shows one glyph per window; this line is where
-            # the numbers live.
-            def part(label, w):
-                u = usage.get(w) or {}
-                return f"{label} {round(u.get('utilization') or 0)}%（{reset_str(u.get('resets_at'))} 重置）"
-            msg = f"✓ {time.strftime('%H:%M')} 已刷新 · " + " · ".join(
-                part(l, w) for l, w in (("5 小时", "five_hour"), ("7 天", "seven_day")))
-        else:
-            msg = "✗ 额度没刷新：" + (err or "未知原因")
-        # Run from `run-shell -b` there is no "current client", so a bare
-        # display-message goes nowhere — the click passes its client along.
-        cmd = ["tmux", "display-message", "-d", "3000"]
-        if "--client" in sys.argv:
-            cmd += ["-c", sys.argv[sys.argv.index("--client") + 1]]
-        subprocess.run(cmd + [msg], capture_output=True)
+        show_card(usage, err, live)
 
 
 if __name__ == "__main__":

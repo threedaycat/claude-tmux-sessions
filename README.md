@@ -326,15 +326,22 @@ What each segment does when clicked:
 
 | segment | click |
 |---|---|
-| `5h▁▋ 7d▁█` | refresh the real 5h / 7d usage now (`⟳` while it runs), then flash the numbers |
+| `5h▂▃ 7d▁█` | refresh the real 5h / 7d usage now (`⟳` while it runs), then a card with the numbers and time to reset |
 | `⏸︎ <window>` | jump to that waiting Claude |
-| `✔︎ 4` / `▶︎ 1` | the picker with just those panes, preview mirrored to the left |
+| `✔︎ 4` / `▶︎ 1` | the picker with just those panes |
 
 Clicking the same thing again closes the float; clicking another swaps it.
+Clickable words in the picker's header are drawn as grey chips; toggling
+`全部` inside a float reopens it at the new height (tmux only grows a
+floating pane downward).
 
-The usage glyphs: the coloured vertical block is how much of the window is
-used (▁ → █, green → red); the grey horizontal one is how long until it
-resets (█ whole window ahead → ▏ about to reset). `bin/usage-refresh.py`
+Each window is two cells. The first is usage: it grows up from the bottom
+(▁ → █, green → red). The second is a cooldown: it fills with blue from the
+top as the reset approaches — all grey, the window just began; all blue,
+it's about to reset. `status-badge.sh states` / `status-badge.sh quota`
+print the two halves separately, so the Claude states can sit next to the
+session name on the left and the quota at the far right. Clicking the quota
+more than once in 20 s shows the card again without a new request. `bin/usage-refresh.py`
 asks the same endpoint `/usage` does, using the OAuth token Claude Code keeps
 in the Keychain — read in memory for that one request, never written, never
 refreshed — every 30 min (`CLAUDE_TMUX_USAGE_REFRESH_MIN`) or on a click. The

@@ -20,13 +20,24 @@ BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 # what no hook fires for (an unread DONE ageing out, a pane killed without
 # SessionEnd). With no status file at all there's nothing to prune but there
 # may still be badges left over from before it was emptied, so sync alone.
-if [ -s "$STATUS_FILE" ]; then
-  python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
-else
-  python3 "$BIN_DIR/../hooks/tmux_status_update.py" sync-windows 2>/dev/null || true
+#
+# One argument picks which half to print, so the two can sit in different
+# places on the bar (e.g. Claude states next to the session name on the
+# left, quota at the far right):
+#   status-badge.sh           both (quota first), as before
+#   status-badge.sh states    WAIT / ✔ / ▶ only
+#   status-badge.sh quota     5h / 7d only — skips the prune, so running
+#                             both halves doesn't prune twice per refresh
+MODE="${1:-all}"
+if [ "$MODE" != quota ]; then
+  if [ -s "$STATUS_FILE" ]; then
+    python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
+  else
+    python3 "$BIN_DIR/../hooks/tmux_status_update.py" sync-windows 2>/dev/null || true
+  fi
 fi
 
-BIN_DIR="$BIN_DIR" python3 - "$STATUS_FILE" <<'PYEOF'
+MODE="$MODE" BIN_DIR="$BIN_DIR" python3 - "$STATUS_FILE" <<'PYEOF'
 import json, os, sys, subprocess, time, unicodedata
 from datetime import datetime
 
@@ -206,11 +217,14 @@ def maybe_refresh(best):
 
 
 GAUGE = "▁▂▃▄▅▆▇█"
-# Time left until the window resets, as a left-growing block: full = the
-# whole window still ahead, a sliver = about to reset. Horizontal and grey,
-# so it can't be mistaken for the vertical, coloured usage block next to it.
-CLOCK = "▏▎▍▌▋▊▉█"
+# Time until the window resets, as a cooldown cell: the part already waited
+# out fills in deep blue from the top, the part still to wait stays grey at
+# the bottom. All grey = the window just began; all blue = it's about to
+# reset. A cooldown, not a quota: the deep colour means "nearly ready", so it
+# reads as progress towards a refill rather than as something being spent.
 WINDOW_SECS = {"5h": 5 * 3600, "7d": 7 * 86400}
+TIME_DONE = "#0087d7"       # deep: cooldown already waited out (top)
+TIME_WAIT = "#585858"       # grey: still to wait (bottom)
 
 
 def level(frac, n):
@@ -222,17 +236,22 @@ def time_left_glyph(label, dt):
     if dt is None:
         return ""
     left = (dt - datetime.now().astimezone()).total_seconds()
-    frac = max(0.0, min(1.0, left / WINDOW_SECS.get(label, 5 * 3600)))
-    return "#[fg=#8a8a8a]" + CLOCK[level(frac, len(CLOCK))]
+    waiting = max(0.0, min(1.0, left / WINDOW_SECS.get(label, 5 * 3600)))
+    k = round(waiting * len(GAUGE))            # eighths still to wait (grey, from the bottom)
+    if k >= len(GAUGE):
+        # Nothing waited out yet: plain grey █ with no background — fonts
+        # often draw █ a little narrower than the cell, and a coloured
+        # background down its edge reads as a second bar.
+        return f"#[fg={TIME_WAIT}]█#[default]"
+    glyph = GAUGE[k - 1] if k else " "
+    return f"#[fg={TIME_WAIT},bg={TIME_DONE}]{glyph}#[default]"
 
 
 def window_segment(label, w, with_reset=False):
-    """Two glyphs per window, no numbers: a dim `5h`, a vertical block for
-    how much is used (▁ barely → █ full, coloured green→red), then a grey
-    horizontal one for how long until it resets (█ whole window ahead →
-    ▏ about to reset). The numbers are one click away (clicking the
-    segment refreshes and flashes them) — in the bar they were a wall of
-    digits competing with the window list for space."""
+    """`5h▂▄`: a dim label, a block for how much is used (grows up, ▁ → █,
+    coloured green → red), then a cooldown cell that fills with blue from
+    the top as the reset approaches (see time_left_glyph). No numbers in the
+    bar — a click opens a card with them (usage-refresh.py --notify)."""
     pct = (w or {}).get("utilization")
     if pct is None:
         return f"#[fg=#585858]{label}·#[default]"
@@ -264,7 +283,7 @@ def quota_segment():
         except Exception:
             pass
     return ("#[range=user|quota]" + window_segment("5h", best.get("five_hour"))
-            + " " + window_segment("7d", best.get("seven_day"))
+            + "  " + window_segment("7d", best.get("seven_day"))
             + refresh_state(best) + "#[norange]")
 
 
@@ -292,21 +311,26 @@ def refresh_state(best):
 # its own" a passing display-message couldn't give. Everything else stays
 # a quiet theme-coloured dot. tmux honours #[...] style directives inside
 # #() output; #[default] restores the status-right style after.
+MODE = os.environ.get("MODE", "all")
 parts = []
-q = quota_segment()
+q = quota_segment() if MODE in ("all", "quota") else ""
 if q:
     parts.append(q)
+if MODE == "quota":
+    blocked, done_unread, running = [], 0, 0
 if blocked:
     blocked.sort(reverse=True)          # longest-waiting named first
     age, name, pane = blocked[0]
     n = len(blocked)
-    # One red chip: ⏸ + the window that is waiting (+N if more are).
+    # ⏸ + the window that is waiting (+N if more are), in red text on the
+    # bar's own background — a filled red chip was too loud to live next to
+    # the session name.
     # Clickable: the range carries the pane it names (`w%38`), so a click
     # lands on exactly the window shown here — the longest-waiting one —
     # rather than whatever jump-top would pick on its own.
     label = clip(name).lstrip("✳ ").strip() + (f" +{n - 1}" if n > 1 else "")
     parts.append(
-        f"#[range=user|w{pane}]#[fg=#ffffff,bg=#d70000,bold] ⏸︎ {label} #[default]#[norange]"
+        f"#[range=user|w{pane}]#[fg=#ff5f5f,bold]⏸︎ {label}#[default]#[norange]"
     )
 # Only the two states worth acting on show here — already-read and
 # aged-out panes stay out of the ambient bar so it never nags with noise.
@@ -321,5 +345,6 @@ if running:
     parts.append(f"#[range=user|running]#[fg=#ffff00]▶︎ {running}#[norange]")
 
 if parts:
-    print("  ".join(parts) + "#[default] ")
+    # No trailing space in quota mode: that half sits at the far right edge.
+    print("  ".join(parts) + ("#[default]" if MODE == "quota" else "#[default] "))
 PYEOF
