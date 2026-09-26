@@ -15,8 +15,8 @@
 # "⋯ 收起 N 个 · a 展开" row (field 4 is "-") means "show me the rest", which
 # is `a`, not a jump.
 #
-# Header: each hint is "<key> <label>", and clicking either word presses that
-# key. Words that aren't a single action (j/k, 数字直跳) do nothing.
+# Header: clickable hints are drawn as chips (bin/header-chips.sh); a click
+# anywhere on a chip presses its key. Plain hints (j/k, 数字直跳) do nothing.
 
 BIN_DIR="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 SH="$BIN_DIR/skip-header.sh"
@@ -30,19 +30,25 @@ case "${1:-}" in
     ;;
   header)
     n="$2"
-    # fzf splits header words with --delimiter, which in the picker is a tab,
-    # so FZF_CLICK_HEADER_WORD comes back as the *whole* header line. Find
-    # the space-separated word under FZF_CLICK_HEADER_COLUMN ourselves,
-    # counting CJK characters as the two columns they occupy.
+    # The header text on screen is in $HEADER_FILE (written by chips(), see
+    # header-chips.sh) — fzf's FZF_CLICK_HEADER_WORD can't be trusted for it.
+    # Find the token under FZF_CLICK_HEADER_COLUMN, counting CJK characters
+    # as the two columns they occupy.
     word=$(python3 -c '
 import os, unicodedata
-line = os.environ.get("FZF_CLICK_HEADER_WORD", "")
+try:
+    line = open(os.environ["HEADER_FILE"]).read()
+except Exception:
+    line = os.environ.get("FZF_CLICK_HEADER_WORD", "")
 col = int(os.environ.get("FZF_CLICK_HEADER_COLUMN") or 0)
 x = 0
 for tok in line.split(" "):
     w = sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in tok)
     if tok and x < col <= x + w:
-        print(tok); break
+        # A chip (bin/header-chips.sh) is one token held together by NBSPs;
+        # its first word is the key, which is what the case below matches.
+        words = tok.replace("\u00a0", " ").split()
+        print(words[0] if words else ""); break
     x += w + 1
 ' 2>/dev/null)
     case "$word" in
@@ -57,7 +63,8 @@ for tok in line.split(" "):
       /|搜索)            exec "$SH" "$n" slash / ;;
       Enter|跳转|跳到该)  exec "$SH" "$n" enter ;;
       ctrl-x|归档)       exec "$SH" "$n" archive ;;
-      q|退出)            exec "$SH" "$n" quit q ;;
+      q|q/esc|退出)      exec "$SH" "$n" quit q ;;
+      Esc)               exec "$SH" "$n" esc ;;
     esac
     ;;
 esac

@@ -34,6 +34,7 @@
 set -euo pipefail
 
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$BIN_DIR/header-chips.sh"          # chips(): header text → clickable-looking buttons
 
 cur="${1:-0}"
 dir="${2:-down}"
@@ -336,7 +337,7 @@ if [ "${FZF_INPUT_STATE:-disabled}" = "enabled" ]; then
     # substituting {n} in, which is what made that particular Esc
     # unescapable. `search()` re-runs the search against the now-empty
     # query and forces the full list back before search is switched off.
-    esc)   echo "clear-query+search()+disable-search+hide-input+change-header($(mode_header))" ;;
+    esc)   echo "clear-query+search()+disable-search+hide-input+change-header($(chips "$(mode_header)"))" ;;
     enter) echo "accept" ;;
     *)     echo "ignore" ;;
   esac
@@ -516,7 +517,7 @@ reload_keeping_place() {
   else
     hdr="$(mode_header)"
   fi
-  echo "change-header($hdr)+reload-sync(cat '$ROWS_FILE')+pos(${pos:-1})"
+  echo "change-header($(chips "$hdr"))+reload-sync(cat '$ROWS_FILE')+pos(${pos:-1})"
 }
 
 # fzf fires `load` every time the list finishes loading — including after
@@ -543,7 +544,7 @@ fi
 # Navigation mode from here on.
 case "$dir" in
   slash)
-    echo "show-input+enable-search+change-header($SEARCH_HEADER)"
+    echo "show-input+enable-search+change-header($(chips "$SEARCH_HEADER"))"
     exit 0
     ;;
   showall)
@@ -559,6 +560,18 @@ case "$dir" in
     # list here rather than inside reload(), and follow up with pos() on
     # wherever that same row landed. reload-sync (not reload) is what makes
     # the pos() land on the new list instead of racing the old one.
+    # In a floating picker (bin/float-picker.sh) the box is sized to the
+    # rows, and tmux can only grow a floating pane downward — past the
+    # status line. So there the toggle reopens the float at the new height
+    # instead of reloading in place. Run detached: it kills this very pane.
+    float_kind=$(tmux show -pqv -t "${TMUX_PANE:-}" @picker_float 2>/dev/null || true)
+    if [ -n "$float_kind" ]; then
+      new_all=1; [ "$(cat "${SHOW_ALL_FILE:-/dev/null}" 2>/dev/null)" = "1" ] && new_all=0
+      float_caller=$(tmux show -pqv -t "$TMUX_PANE" @picker_caller 2>/dev/null || true)
+      tmux run-shell -b "CLAUDE_TMUX_SHOW_ALL=$new_all FLOAT_REOPEN=1 CLAUDE_TMUX_USAGE_FOOTER=${CLAUDE_TMUX_USAGE_FOOTER:-1} '$BIN_DIR/float-picker.sh' '$float_caller' '$float_kind'"
+      echo "ignore"
+      exit 0
+    fi
     remember_cursor
     if [ -n "${SHOW_ALL_FILE:-}" ]; then
       if [ "$(cat "$SHOW_ALL_FILE" 2>/dev/null)" = "1" ]; then
@@ -699,7 +712,7 @@ if [ "$dir" = "digit" ]; then
   hdr=""
   if [ -n "$expanded" ]; then
     fold_team
-    hdr="change-header($(mode_header))+"
+    hdr="change-header($(chips "$(mode_header)"))+"
   fi
   pend=""
   [ -n "${PENDING_FILE:-}" ] && [ -s "$PENDING_FILE" ] && pend="$(cat "$PENDING_FILE")"
@@ -802,7 +815,7 @@ if [ "$dir" = "right" ] && [ -n "${EXPAND_FILE:-}" ] \
    && is_pane "$orig" && is_mate "$(( orig + 1 ))"; then
   printf '%s' "$orig" > "$EXPAND_FILE"
   expanded="$orig"
-  echo "change-header($TEAM_OPEN_HEADER)+pos($(( orig + 1 )))"
+  echo "change-header($(chips "$TEAM_OPEN_HEADER"))+pos($(( orig + 1 )))"
   exit 0
 fi
 if [ "$dir" = "left" ] && [ -n "$expanded" ] && is_open_mate "$orig"; then
@@ -810,7 +823,7 @@ if [ "$dir" = "left" ] && [ -n "$expanded" ] && is_open_mate "$orig"; then
   fold_team
   # Back on the lead, so the header offers `l` again — folding and unfolding
   # the same team is one key each way, with the way back always on screen.
-  echo "change-header($(mode_header "$lead"))+pos($lead)"
+  echo "change-header($(chips "$(mode_header "$lead")"))+pos($lead)"
   exit 0
 fi
 
@@ -902,4 +915,4 @@ fi
 # string already showing, so it costs a redraw of one line, and it is how both
 # the `f` notice and a stale empty-state header clear themselves without a
 # second piece of per-instance state to remember them by.
-echo "change-header($(mode_header "$idx"))+pos($idx)"
+echo "change-header($(chips "$(mode_header "$idx")"))+pos($idx)"

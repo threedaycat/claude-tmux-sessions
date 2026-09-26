@@ -74,6 +74,9 @@ fi
 # header after a mode switch. It used to be written out twice, once here
 # and once there, which is how the two could disagree.
 export PANE_HEADER
+HEADER_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-header.XXXXXX")"
+export HEADER_FILE                    # the header as plain text, for mouse.sh
+. "$BIN_DIR/header-chips.sh"          # chips(): the header drawn as buttons
 
 rows="$("$BIN_DIR/list-rows.sh")"
 
@@ -128,7 +131,7 @@ export PENDING_FILE
 JUMP_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-jump.XXXXXX")"
 export JUMP_FILE
 
-trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "$JUMP_FILE" "${TEAM_FILE:-}" "${EXPAND_FILE:-}" "${INIT_FILE:-}"' EXIT
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "$HEADER_FILE" "$JUMP_FILE" "${TEAM_FILE:-}" "${EXPAND_FILE:-}" "${INIT_FILE:-}"' EXIT
 
 # Starts with search disabled AND the input line hidden (--disabled
 # --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
@@ -169,7 +172,7 @@ else
   PREVIEW_WINDOW="$side,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,$border,wrap,follow"
 fi
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
-  --header="$PANE_HEADER"
+  --header="$(chips "$PANE_HEADER")"
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
   --preview-window="$PREVIEW_WINDOW"

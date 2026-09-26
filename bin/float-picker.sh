@@ -4,8 +4,8 @@
 #
 #   float-picker.sh <caller-pane> [kind] [width]
 #     kind:  all (default) | done | running | wait — which panes to list
-#            (CLAUDE_TMUX_ONLY); anything but `all` puts the preview on the
-#            left, since those open from the right end of the status bar.
+#            (CLAUDE_TMUX_ONLY). List on the left, preview on the right,
+#            whichever kind — they all open from the left end of the bar.
 #     width: columns or N% (default: full width)
 #
 # e.g. bound to a click on the session name in the status bar:
@@ -46,10 +46,12 @@ read -r open open_kind < <(tmux list-panes -t "$window" -F '#{pane_id} #{@picker
   | awk '$2!=""{print; exit}')
 if [ -n "${open:-}" ]; then
   tmux kill-pane -t "$open"
-  [ "$open_kind" = "$kind" ] && exit 0
+  # FLOAT_REOPEN: the float asked to be rebuilt at a new height (`a` inside
+  # it — see skip-header.sh showall), so the same kind means reopen, not close.
+  [ "$open_kind" = "$kind" ] && [ -z "${FLOAT_REOPEN:-}" ] && exit 0
 fi
 if [ "$kind" != all ]; then
-  export CLAUDE_TMUX_ONLY="$kind" CLAUDE_TMUX_PREVIEW_SIDE=left
+  export CLAUDE_TMUX_ONLY="$kind"
 fi
 
 # Same CALLER_PANE the picker will get: the caller's group is never
