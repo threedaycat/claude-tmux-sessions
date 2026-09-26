@@ -10,8 +10,8 @@ Claude Code does keep it, in its own files:
 
     ~/.claude/sessions/{pid}.json
 
-with `name` and, when the name was generated rather than chosen,
-`nameSource: "derived"`. That is the whole reason this module exists as its
+with `name` and `nameSource`: `"derived"` when the name was generated
+from the cwd, `"user"` (or, in older versions, no field) when chosen. That is the whole reason this module exists as its
 own file rather than a few lines in either renderer: it is a second
 external format this repo does not own, and the rule that kept
 `agent_teams.py` honest applies unchanged — one parser, so the row list and
@@ -61,14 +61,15 @@ def manual_names():
     would make the name column *less* accurate for everybody who has never
     renamed anything.
 
-    The test is therefore "the field is absent", not "the field isn't
-    derived". `/rename` writes no `nameSource` at all, so absence is what a
-    chosen name looks like today. The strict reading is the safe one under
-    a format that will change: a future `nameSource: "user"` would be
-    rejected, which loses a name that was never shown before and is
-    invisible; the loose reading would let a future `nameSource: "auto"`
-    through and quietly downgrade the column for people with no teams and
-    no renames anywhere near them.
+    The test is therefore an allow-list, not "the field isn't derived":
+    absent (what `/rename` wrote at first) or `"user"` (what it writes now —
+    by 2.1.283 every chosen name on this machine carried it, and the strict
+    absent-only reading had quietly stopped finding any). The strict reading
+    is still the safe one under a format that changes: an unknown future
+    value is rejected, which loses a name that was never shown before; the
+    loose reading would let a future `nameSource: "auto"` through and
+    quietly downgrade the column for people with no teams and no renames
+    anywhere near them.
 
     **2. The files are keyed by pid, not by session.** A crashed Claude
     leaves its file behind, and a resumed session gets a new pid and a new
@@ -105,7 +106,7 @@ def manual_names():
                 rec = json.load(f)
         except Exception:                                      # noqa: BLE001
             continue
-        if not isinstance(rec, dict) or "nameSource" in rec:
+        if not isinstance(rec, dict) or rec.get("nameSource", "user") != "user":
             continue
         sid = rec.get("sessionId")
         name = rec.get("name")
