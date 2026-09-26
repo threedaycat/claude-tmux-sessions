@@ -27,6 +27,8 @@ ln -sf "$REPO_DIR/bin/jump-top.sh" "$CLAUDE_HOOKS_DIR/jump-top.sh"
 ln -sf "$REPO_DIR/bin/status-badge.sh" "$CLAUDE_HOOKS_DIR/status-badge.sh"
 ln -sf "$REPO_DIR/bin/restore-claude.sh" "$CLAUDE_HOOKS_DIR/restore-claude.sh"
 ln -sf "$REPO_DIR/bin/float-picker.sh" "$CLAUDE_HOOKS_DIR/float-picker.sh"
+ln -sf "$REPO_DIR/bin/usage-refresh.py" "$CLAUDE_HOOKS_DIR/usage-refresh.py"
+ln -sf "$REPO_DIR/bin/status-click.sh" "$CLAUDE_HOOKS_DIR/status-click.sh"
 
 echo "==> updating $SETTINGS_FILE"
 python3 - "$SETTINGS_FILE" <<'PYEOF'

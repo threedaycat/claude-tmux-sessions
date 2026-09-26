@@ -230,12 +230,10 @@ rm -f ~/.claude/tmux-claude-status.json ~/.claude/tmux-claude-restore.json ~/.cl
   `CLAUDE_TMUX_SHOW_ALL=1`。你当前所在的那个 pane 永远不会被收起,即使它是安静的那类。
 - `p` 收起预览,把整个宽度让给列表 —— 追踪十几个 pane、想扫一眼名字和路径的时候值得。再按
   一次把预览叫回来,或者用 `CLAUDE_TMUX_PREVIEW_WIDTH`(默认 `50` —— 对半分,预览就和它显示的那个 pane 差不多宽)
-  改这个比例。`CLAUDE_TMUX_PREVIEW_WIDTH=0` 启动时不带预览(`p` 仍能打开),
-  `CLAUDE_TMUX_USAGE_FOOTER=0` 去掉底部的额度 footer —— 两个合起来就是一个小的快切弹窗,比如绑到点状态栏:
+  改这个比例。`CLAUDE_TMUX_PREVIEW_WIDTH=0` 启动时不带预览(`p` 仍能打开),`CLAUDE_TMUX_USAGE_FOOTER=0` 去掉底部的额度 footer。
+- **鼠标。** 单击一行就跳过去(不用双击);单击 `⋯ 收起` 那行是展开。提示栏上每个词都是按钮 ——
+  `全部` 就是 `a`,`预览` 就是 `p`,`总览` 就是 `o`,`✕ 关闭` 关掉。
 
-      bind -n MouseDown1StatusLeft run-shell 'tmux display-popup -x 0 -y S -w 55% -h 60% -E "CALLER_PANE=#{pane_id} CLAUDE_TMUX_PREVIEW_WIDTH=0 CLAUDE_TMUX_USAGE_FOOTER=0 ~/.claude/hooks/claude-tmux-picker.sh"'
-
-  tmux 的弹窗点外面关不掉(浮窗外的点击 tmux 直接丢掉),所以顶上的 `✕ 关闭` 可以点。
 - `o` 打开总览:一屏回答"我回来了,现在是什么局面"。**第一行就是结论** —— `5 个有结果等你看`
   或者 `没人等你 · 2 个还在跑`。下面**一个 tmux session 一张卡片**,最急的 session 在最前,
   卡片标题就写清它手上有什么(`✔ 3  ▶ 1  +6 安静`)以及哪个编队在里面跑。5h 额度、7 天窗口、
@@ -256,6 +254,31 @@ rm -f ~/.claude/tmux-claude-status.json ~/.claude/tmux-claude-restore.json ~/.cl
 - `f` 把列表收窄成"只看编队" —— 只有你真的有编队时才生效。`l` 是它的小号版本:`f` 回答
   "谁在哪个编队",`l` 回答"这一个编队里都有谁"。见下。
 - `Enter` 跳转 · `ctrl-x` 归档当前高亮的 pane · `q` / `Esc` 关闭。
+
+### 只用鼠标:点状态栏打开 picker
+
+tmux 3.7+ 下,picker 可以作为**浮动 pane** 贴着窗口底部弹出,有几行就多高,**点外面任何地方就关**
+(`bin/float-picker.sh`)。`display-popup` 做不到最后这点 —— 浮窗外的点击 tmux 直接丢掉 —— 而浮动
+pane 是真 pane,焦点一走就能关掉它。状态栏上的几段就成了按钮:
+
+    # 点 session 名 → 完整 picker,左下角
+    bind -n MouseDown1StatusLeft run-shell 'CLAUDE_TMUX_USAGE_FOOTER=0 ~/.claude/hooks/float-picker.sh #{pane_id}'
+    # 点 status-badge 的某一段 → 见 bin/status-click.sh
+    bind -n MouseDown1Status if -F '#{==:#{mouse_status_range},window}' { switch-client -t = } { run-shell '~/.claude/hooks/status-click.sh "#{mouse_status_range}" "#{pane_id}" "#{client_name}"' }
+
+| 那一段 | 点了 |
+|---|---|
+| `5h▁▋ 7d▁█` | 马上刷新真实的 5 小时 / 7 天用量(进行中显示 `⟳`),查完闪一行数字 |
+| `⏸︎ <窗口名>` | 跳到那个在等你确认的 Claude |
+| `✔︎ 4` / `▶︎ 1` | 只列这一类的 picker,预览镜像到左边 |
+
+再点同一个就关掉,点另一个就换过去。
+
+额度的两个字形:彩色竖块是这个窗口用了多少(▁ → █,绿 → 红);灰色横条是离重置还有多久
+(█ 整个窗口都还在前面 → ▏ 马上重置)。`bin/usage-refresh.py` 调的是 `/usage` 用的同一个接口,
+用 Claude Code 存在钥匙串里的 OAuth 令牌 —— 只在内存里用这一次,不落盘、不代为续期 ——
+每 30 分钟一次(`CLAUDE_TMUX_USAGE_REFRESH_MIN`)或点一下就刷。这个接口不是公开文档化的 API,
+哪天变了,状态栏就退回 Claude Code 自己的缓存。
 
 ### Agent Teams(编队)
 

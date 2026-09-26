@@ -66,6 +66,10 @@ print(best or "")
 PYEOF
 )
 
+# An explicit pane (the status bar's clickable WAIT chip names one) wins
+# over the ranking above.
+case "${1:-}" in %*) pane_id="$1" ;; esac
+
 if [ -z "$pane_id" ]; then
   tmux display-message "没有需要处理的 pane"
   exit 0

@@ -270,13 +270,11 @@ Then remove the four `tmux_status_update.py` hook entries from
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
   `50` — an even split, so the preview is about as wide as the pane it's
   showing) to change it. `CLAUDE_TMUX_PREVIEW_WIDTH=0` starts with it hidden
-  (`p` still opens it) and `CLAUDE_TMUX_USAGE_FOOTER=0` drops the usage footer —
-  together they make a small quick-switch popup, e.g. on a status-bar click:
+  (`p` still opens it); `CLAUDE_TMUX_USAGE_FOOTER=0` drops the usage footer.
+- **Mouse.** A single click on a row jumps there (no double-click); a click on
+  the `⋯ 收起` row unfolds it. Every word in the key-hint header is a button —
+  `全部` is `a`, `预览` is `p`, `总览` is `o`, `✕ 关闭` closes.
 
-      bind -n MouseDown1StatusLeft run-shell 'tmux display-popup -x 0 -y S -w 55% -h 60% -E "CALLER_PANE=#{pane_id} CLAUDE_TMUX_PREVIEW_WIDTH=0 CLAUDE_TMUX_USAGE_FOOTER=0 ~/.claude/hooks/claude-tmux-picker.sh"'
-
-  A popup can't be dismissed by clicking outside it (tmux drops those clicks),
-  so the header's leading `✕ 关闭` is clickable instead.
 - `o` opens the overview: one screen for "I'm back — what's the situation".
   **The first line is the answer** — `5 个有结果等你看`, or `没人等你 · 2 个还在跑`.
   Below it, **one card per tmux session**, most urgent session first, each
@@ -310,6 +308,38 @@ Then remove the four `tmux_status_update.py` hook entries from
   when you actually have a team. `l` is the small version of it: `f` answers
   *who is on which team*, `l` answers *who is on this one*. See below.
 - `Enter` jumps · `ctrl-x` archives the highlighted pane · `q` / `Esc` closes.
+
+### Mouse-only: the status bar opens the picker
+
+With tmux 3.7+ the picker can open as a **floating pane** anchored to the
+bottom of the window, exactly as tall as its rows, and closed by clicking
+anywhere else (`bin/float-picker.sh`). A `display-popup` can't do that last
+part — tmux drops clicks outside a popup — but a floating pane is a real pane,
+so focus leaving it closes it. The status bar's segments become the buttons:
+
+    # click the session name → the full picker, bottom-left
+    bind -n MouseDown1StatusLeft run-shell 'CLAUDE_TMUX_USAGE_FOOTER=0 ~/.claude/hooks/float-picker.sh #{pane_id}'
+    # click a status-badge segment → see bin/status-click.sh
+    bind -n MouseDown1Status if -F '#{==:#{mouse_status_range},window}' { switch-client -t = } { run-shell '~/.claude/hooks/status-click.sh "#{mouse_status_range}" "#{pane_id}" "#{client_name}"' }
+
+What each segment does when clicked:
+
+| segment | click |
+|---|---|
+| `5h▁▋ 7d▁█` | refresh the real 5h / 7d usage now (`⟳` while it runs), then flash the numbers |
+| `⏸︎ <window>` | jump to that waiting Claude |
+| `✔︎ 4` / `▶︎ 1` | the picker with just those panes, preview mirrored to the left |
+
+Clicking the same thing again closes the float; clicking another swaps it.
+
+The usage glyphs: the coloured vertical block is how much of the window is
+used (▁ → █, green → red); the grey horizontal one is how long until it
+resets (█ whole window ahead → ▏ about to reset). `bin/usage-refresh.py`
+asks the same endpoint `/usage` does, using the OAuth token Claude Code keeps
+in the Keychain — read in memory for that one request, never written, never
+refreshed — every 30 min (`CLAUDE_TMUX_USAGE_REFRESH_MIN`) or on a click. The
+endpoint isn't a documented public API; if it changes, the bar falls back to
+Claude Code's own cache.
 
 ### Agent Teams
 

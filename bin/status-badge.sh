@@ -26,7 +26,7 @@ else
   python3 "$BIN_DIR/../hooks/tmux_status_update.py" sync-windows 2>/dev/null || true
 fi
 
-python3 - "$STATUS_FILE" <<'PYEOF'
+BIN_DIR="$BIN_DIR" python3 - "$STATUS_FILE" <<'PYEOF'
 import json, os, sys, subprocess, time, unicodedata
 from datetime import datetime
 
@@ -80,7 +80,7 @@ def clip(s, width=22):
 IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 
 now = time.time()
-blocked = []            # (elapsed_secs, window_name) for blocked-and-unread
+blocked = []            # (elapsed_secs, window_name, pane_id) for blocked-and-unread
 done_unread = running = 0
 for pane, e in data.items():
     if pane not in live or e.get("archived"):
@@ -92,7 +92,7 @@ for pane, e in data.items():
     # already-visited one shouldn't keep sounding the banner. A fresh
     # permission prompt overwrites the entry and clears read, re-alerting.
     if status == "blocked" and not e.get("read"):
-        blocked.append((age, win_of.get(pane) or e.get("window_name") or pane))
+        blocked.append((age, win_of.get(pane) or e.get("window_name") or pane, pane))
     elif status in ("done", "input") and e.get("read"):
         pass                            # already seen — kept out of the bar
     elif status in ("done", "input"):
@@ -150,59 +150,139 @@ def reset_suffix(resets_at):
     return f" #[fg=#8a8a8a]↻{dt.strftime(fmt)}#[default]", dt
 
 
-def quota_segment():
-    """A compact 5-hour-window readout: how much of the window you've used
-    and when it resets. Primary source is Claude Code's own cache
-    (cachedUsageUtilization in ~/.claude.json). When that's present we use
-    it and snapshot it; when it's been wiped (see QUOTA_CACHE) we fall back
-    to the snapshot, shown muted with a ~ 'last known' marker, until fresh
-    data returns — so the segment never just blinks out. A full window
-    still shows a full red bar; only a genuinely empty data source falls
-    through to the quiet placeholder."""
-    live = None
-    try:
-        cfg = json.load(open(os.path.expanduser("~/.claude.json")))
-        fh = (((cfg.get("cachedUsageUtilization") or {}).get("utilization") or {})
-              .get("five_hour")) or {}
-        pct = fh.get("utilization")
-        if pct is not None:
-            live = {"pct": float(pct), "resets_at": fh.get("resets_at")}
-    except Exception:
-        live = None
+LIVE_FILE = os.path.expanduser("~/.claude/tmux-usage-live.json")
+REFRESH = os.path.join(os.environ.get("BIN_DIR", ""), "usage-refresh.py")
 
-    if live is not None:
-        # Mirror it for the next wipe. Atomic replace (unique tmp + rename)
-        # so concurrent renders on multiple attached clients never tear it.
+
+def usage_now():
+    """The freshest usage reading we have, as {window: {utilization,
+    resets_at}} plus fetched_at_ms. Two sources, newest wins:
+      - Claude Code's own cache (cachedUsageUtilization in ~/.claude.json),
+        updated whenever Claude Code fetches — e.g. when you run /usage;
+      - usage-refresh.py's LIVE_FILE, updated every 30 min in the background
+        and on a click on the quota segment.
+    The older QUOTA_CACHE snapshot (5h only) is the last resort, for when
+    both are gone."""
+    best = None
+    try:
+        cached = json.load(open(os.path.expanduser("~/.claude.json"))).get("cachedUsageUtilization") or {}
+        util = cached.get("utilization") or {}
+        if (util.get("five_hour") or {}).get("utilization") is not None:
+            best = {"five_hour": util.get("five_hour"), "seven_day": util.get("seven_day") or {},
+                    "fetched_at_ms": cached.get("fetchedAtMs") or 0}
+    except Exception:
+        pass
+    try:
+        live = json.load(open(LIVE_FILE))
+        if (live.get("five_hour") or {}).get("utilization") is not None and \
+                (best is None or (live.get("fetched_at_ms") or 0) > best["fetched_at_ms"]):
+            best = live
+    except Exception:
+        pass
+    if best is None:
+        try:
+            snap = json.load(open(QUOTA_CACHE))
+            if snap.get("pct") is not None:
+                best = {"five_hour": {"utilization": snap["pct"], "resets_at": snap.get("resets_at")},
+                        "seven_day": {}, "fetched_at_ms": 0}
+        except Exception:
+            pass
+    return best
+
+
+def maybe_refresh(best):
+    """Kick usage-refresh.py in the background when the newest reading is
+    older than its interval. It throttles itself (attempts count too), so
+    calling this on every 10s status render costs one stat, not a request."""
+    interval = 60 * int(os.environ.get("CLAUDE_TMUX_USAGE_REFRESH_MIN") or 30)
+    age = time.time() - ((best or {}).get("fetched_at_ms") or 0) / 1000
+    if age > interval and os.path.exists(REFRESH):
+        try:
+            subprocess.Popen([sys.executable, REFRESH], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        except Exception:
+            pass
+
+
+GAUGE = "▁▂▃▄▅▆▇█"
+# Time left until the window resets, as a left-growing block: full = the
+# whole window still ahead, a sliver = about to reset. Horizontal and grey,
+# so it can't be mistaken for the vertical, coloured usage block next to it.
+CLOCK = "▏▎▍▌▋▊▉█"
+WINDOW_SECS = {"5h": 5 * 3600, "7d": 7 * 86400}
+
+
+def level(frac, n):
+    """Nearest of n glyph heights, where glyph i draws (i+1)/n."""
+    return max(0, min(n - 1, round(frac * n) - 1))
+
+
+def time_left_glyph(label, dt):
+    if dt is None:
+        return ""
+    left = (dt - datetime.now().astimezone()).total_seconds()
+    frac = max(0.0, min(1.0, left / WINDOW_SECS.get(label, 5 * 3600)))
+    return "#[fg=#8a8a8a]" + CLOCK[level(frac, len(CLOCK))]
+
+
+def window_segment(label, w, with_reset=False):
+    """Two glyphs per window, no numbers: a dim `5h`, a vertical block for
+    how much is used (▁ barely → █ full, coloured green→red), then a grey
+    horizontal one for how long until it resets (█ whole window ahead →
+    ▏ about to reset). The numbers are one click away (clicking the
+    segment refreshes and flashes them) — in the bar they were a wall of
+    digits competing with the window list for space."""
+    pct = (w or {}).get("utilization")
+    if pct is None:
+        return f"#[fg=#585858]{label}·#[default]"
+    pct = float(pct)
+    g = GAUGE[level(pct / 100, len(GAUGE))]
+    _, dt = reset_suffix((w or {}).get("resets_at") or "")
+    if dt is not None and dt <= datetime.now().astimezone():
+        # The window this reading belongs to has already rolled over.
+        return f"#[fg=#585858]{label}{g}#[default]"
+    return (f"#[fg=#6c6c6c]{label}#[fg={quota_colour(pct)}]{g}"
+            f"{time_left_glyph(label, dt)}#[default]")
+
+
+def quota_segment():
+    """5h and 7d side by side (`5h 11%↻22:30 7d 5%`). Wrapped in a user range named `quota` so a mouse click on it can
+    be told apart from a click on the window list (see the MouseDown1Status
+    binding in the README) and trigger a refresh."""
+    best = usage_now()
+    maybe_refresh(best)
+    if best is None:
+        return "#[range=user|quota]#[fg=#585858]5h· 7d·#[default]#[norange]"
+    if best.get("fetched_at_ms"):
         try:
             tmp = f"{QUOTA_CACHE}.{os.getpid()}.tmp"
             with open(tmp, "w") as f:
-                json.dump(live, f)
+                json.dump({"pct": float(best["five_hour"]["utilization"]),
+                           "resets_at": best["five_hour"].get("resets_at")}, f)
             os.replace(tmp, QUOTA_CACHE)
         except Exception:
             pass
-        pct = live["pct"]
-        colour = quota_colour(pct)
-        reset, _ = reset_suffix(live.get("resets_at") or "")
-        return (f"#[fg=#8a8a8a]5h#[default] {quota_bar(pct, colour)} "
-                f"#[fg={colour}]{int(round(pct))}%#[default]{reset}")
+    return ("#[range=user|quota]" + window_segment("5h", best.get("five_hour"))
+            + " " + window_segment("7d", best.get("seven_day"))
+            + refresh_state(best) + "#[norange]")
 
-    # No live data — fall back to our snapshot if the window it belongs to
-    # hasn't rolled over yet (a past resets_at means the cached % is stale).
+
+def refresh_state(best):
+    """Only says something when there is something to say: `⟳` while a
+    request is in flight, `✗` for a while after one failed. The reading's
+    own time is in the message a click flashes, not in the bar."""
     try:
-        snap = json.load(open(QUOTA_CACHE))
+        live = json.load(open(LIVE_FILE))
     except Exception:
-        snap = None
-    if snap and snap.get("pct") is not None:
-        reset, dt = reset_suffix(snap.get("resets_at") or "")
-        if dt is None or dt > datetime.now().astimezone():
-            pct = float(snap["pct"])
-            # Muted grey bar + ~ marker: last known reading, not live.
-            return (f"#[fg=#585858]5h#[default] {quota_bar(pct, '#8a8a8a')} "
-                    f"#[fg=#8a8a8a]~{int(round(pct))}%#[default]{reset}")
-
-    # Nothing usable — a quiet placeholder so the segment doesn't vanish;
-    # it refills once the active account fetches usage again (/usage).
-    return "#[fg=#585858]5h ░░░░░░░░░░ ?#[default]"
+        live = {}
+    now_ms = time.time() * 1000
+    if now_ms - (live.get("refreshing_since_ms") or 0) < 30_000:
+        return "#[fg=#ffd700]⟳#[default]"
+    if (live.get("error_at_ms") or 0) > (best.get("fetched_at_ms") or 0) \
+            and now_ms - live["error_at_ms"] < 10 * 60_000:
+        return "#[fg=#ff8700]✗#[default]"
+    return ""
 
 
 # A blocked pane is the one thing that actually stalls you, so it gets a
@@ -218,23 +298,27 @@ if q:
     parts.append(q)
 if blocked:
     blocked.sort(reverse=True)          # longest-waiting named first
-    age, name = blocked[0]
+    age, name, pane = blocked[0]
     n = len(blocked)
-    chip = f"#[fg=#e4e4e4,bg=#d70000,bold] ⏸︎ WAIT{f' {n}' if n > 1 else ''} #[default]"
-    label = clip(name) + (f" +{n - 1}" if n > 1 else "")
+    # One red chip: ⏸ + the window that is waiting (+N if more are).
+    # Clickable: the range carries the pane it names (`w%38`), so a click
+    # lands on exactly the window shown here — the longest-waiting one —
+    # rather than whatever jump-top would pick on its own.
+    label = clip(name).lstrip("✳ ").strip() + (f" +{n - 1}" if n > 1 else "")
     parts.append(
-        f"{chip} #[fg=#e4e4e4]{label}#[default]  #[fg=#8a8a8a]{fmt_dur(age)}#[default]"
+        f"#[range=user|w{pane}]#[fg=#ffffff,bg=#d70000,bold] ⏸︎ {label} #[default]#[norange]"
     )
 # Only the two states worth acting on show here — already-read and
 # aged-out panes stay out of the ambient bar so it never nags with noise.
 # Icons and colours match the picker's labels: ✔ DONE-unread (green, a
 # result to look at) leads, then ▶ RUN (yellow, Claude's still busy —
 # nothing for you to do). The blocked WAIT chip above outranks both and
-# leads the whole segment. ︎ forces the narrow text glyph.
+# leads the whole segment. ︎ forces the narrow text glyph. Each is a
+# clickable range: a click opens the picker listing just those panes.
 if done_unread:
-    parts.append(f"#[fg=#5fff00]✔︎ {done_unread}")
+    parts.append(f"#[range=user|done]#[fg=#5fff00]✔︎ {done_unread}#[norange]")
 if running:
-    parts.append(f"#[fg=#ffff00]▶︎ {running}")
+    parts.append(f"#[range=user|running]#[fg=#ffff00]▶︎ {running}#[norange]")
 
 if parts:
     print("  ".join(parts) + "#[default] ")
