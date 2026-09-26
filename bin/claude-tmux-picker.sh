@@ -54,7 +54,7 @@ CLAUDE_HOME_DIR="${CLAUDE_HOME:-$HOME/.claude}"
 # want when you have just come back and don't know where to look yet — and
 # the header is cut off around column 78 on the list side of a split picker,
 # so the front is the only place a new entry is reliably on screen.
-PANE_HEADER='o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+PANE_HEADER='✕ 关闭 · o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 if [ -d "$CLAUDE_HOME_DIR/teams" ]; then
   TEAM_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-teamonly.XXXXXX")"
   export TEAM_FILE
@@ -68,7 +68,7 @@ if [ -d "$CLAUDE_HOME_DIR/teams" ]; then
   # row, and this string is already wider than the list side of a split
   # picker, so a permanent entry would push an existing one off the end.
   # skip-header.sh appends the hint on the rows where the key works.
-  PANE_HEADER='o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · f 编队 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
+  PANE_HEADER='✕ 关闭 · o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · f 编队 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出'
 fi
 # Exported so skip-header.sh uses the same string when it restores the
 # header after a mode switch. It used to be written out twice, once here
@@ -152,11 +152,20 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "$JUMP_FI
 #
 # The `load` bind at the bottom passes a literal 0 rather than `{n}`, so it
 # never had the problem and needs no quotes.
+# CLAUDE_TMUX_PREVIEW_WIDTH=0 starts with the preview hidden — for a small
+# popup where half the width can't be spared. `p` still opens it, at the
+# default 50%, so nothing is lost, only deferred. list-rows.sh reads the same
+# variable and gives the freed columns to the row's task line.
+if [ "${CLAUDE_TMUX_PREVIEW_WIDTH:-50}" = 0 ]; then
+  PREVIEW_WINDOW="right,50%,border-left,wrap,follow,hidden"
+else
+  PREVIEW_WINDOW="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,border-left,wrap,follow"
+fi
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --header="$PANE_HEADER"
   --layout=reverse --height=100%
   --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
-  --preview-window="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,border-left,wrap,follow"
+  --preview-window="$PREVIEW_WINDOW"
   --preview-label=' Claude 实时画面 '
   --bind "down:transform:$BIN_DIR/skip-header.sh \"{n}\" down"
   --bind "up:transform:$BIN_DIR/skip-header.sh \"{n}\" up"
@@ -194,10 +203,20 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   # as "it did something" while nothing was jumped to. The transform answers
   # `accept` in every other case, so this changes nothing you can see.
   --bind "enter:transform:$BIN_DIR/skip-header.sh \"{n}\" enter"
+  # A mouse way out. A popup ignores clicks outside its box (tmux popup.c
+  # drops them), so "click elsewhere to cancel" is impossible here; the
+  # header's leading `✕ 关闭` is the button instead. Only that word closes —
+  # the rest of the header is key hints, and a click there should do nothing.
+  --bind 'click-header:transform:case "$FZF_CLICK_HEADER_WORD" in ✕|关闭) echo abort ;; esac'
   --bind "q:transform:$BIN_DIR/skip-header.sh \"{n}\" quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh \"{n}\" esc"
-  --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh \"{n}\" archive"
-  --bind "start:bg-transform-footer:$BIN_DIR/usage-footer.sh")
+  --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh \"{n}\" archive")
+# The usage footer is for the full picker. CLAUDE_TMUX_USAGE_FOOTER=0 drops it
+# for a small quick-switch popup, where it is one more line between you and
+# the row you came for.
+if [ "${CLAUDE_TMUX_USAGE_FOOTER:-1}" != 0 ]; then
+  fzf_args+=(--bind "start:bg-transform-footer:$BIN_DIR/usage-footer.sh")
+fi
 
 # Digits type a pane-row number (the gutter number) and jump there — see
 # skip-header.sh. 1-9 still jump instantly whenever they can't begin a

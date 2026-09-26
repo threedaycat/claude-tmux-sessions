@@ -230,7 +230,12 @@ rm -f ~/.claude/tmux-claude-status.json ~/.claude/tmux-claude-restore.json ~/.cl
   `CLAUDE_TMUX_SHOW_ALL=1`。你当前所在的那个 pane 永远不会被收起,即使它是安静的那类。
 - `p` 收起预览,把整个宽度让给列表 —— 追踪十几个 pane、想扫一眼名字和路径的时候值得。再按
   一次把预览叫回来,或者用 `CLAUDE_TMUX_PREVIEW_WIDTH`(默认 `50` —— 对半分,预览就和它显示的那个 pane 差不多宽)
-  改这个比例。
+  改这个比例。`CLAUDE_TMUX_PREVIEW_WIDTH=0` 启动时不带预览(`p` 仍能打开),
+  `CLAUDE_TMUX_USAGE_FOOTER=0` 去掉底部的额度 footer —— 两个合起来就是一个小的快切弹窗,比如绑到点状态栏:
+
+      bind -n MouseDown1StatusLeft run-shell 'tmux display-popup -x 0 -y S -w 55% -h 60% -E "CALLER_PANE=#{pane_id} CLAUDE_TMUX_PREVIEW_WIDTH=0 CLAUDE_TMUX_USAGE_FOOTER=0 ~/.claude/hooks/claude-tmux-picker.sh"'
+
+  tmux 的弹窗点外面关不掉(浮窗外的点击 tmux 直接丢掉),所以顶上的 `✕ 关闭` 可以点。
 - `o` 打开总览:一屏回答"我回来了,现在是什么局面"。**第一行就是结论** —— `5 个有结果等你看`
   或者 `没人等你 · 2 个还在跑`。下面**一个 tmux session 一张卡片**,最急的 session 在最前,
   卡片标题就写清它手上有什么(`✔ 3  ▶ 1  +6 安静`)以及哪个编队在里面跑。5h 额度、7 天窗口、

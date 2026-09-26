@@ -94,8 +94,8 @@ fi
 # otherwise be the only sign anything was wrong. It is also the version
 # without `f`, which is correct: no picker instance means no team state to
 # filter.
-PANE_HEADER="${PANE_HEADER:-o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出}"
-SESSION_HEADER='j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
+PANE_HEADER="${PANE_HEADER:-✕ 关闭 · o 总览 · j/k 选窗口 · 数字直跳 · h session · a 全部 · p 预览 · t token · Enter 跳转 · / 搜索 · ctrl-x 归档 · q 退出}"
+SESSION_HEADER='✕ 关闭 · j/k 选 session · l 切回选窗口 · Enter 跳到该 session · / 搜索 · q 退出'
 SEARCH_HEADER='输入过滤 · Enter 跳转 · Esc 返回 j/k 导航'
 # Shown when `f` had nothing to narrow to, or when the rows it was showing
 # went away. No parentheses in this string: fzf parses `change-header(…)`

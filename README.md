@@ -269,7 +269,14 @@ Then remove the four `tmux_status_update.py` hook entries from
   you're tracking a dozen-plus panes and want to scan names and paths. Press it
   again to bring the preview back, or set `CLAUDE_TMUX_PREVIEW_WIDTH` (default
   `50` — an even split, so the preview is about as wide as the pane it's
-  showing) to change it.
+  showing) to change it. `CLAUDE_TMUX_PREVIEW_WIDTH=0` starts with it hidden
+  (`p` still opens it) and `CLAUDE_TMUX_USAGE_FOOTER=0` drops the usage footer —
+  together they make a small quick-switch popup, e.g. on a status-bar click:
+
+      bind -n MouseDown1StatusLeft run-shell 'tmux display-popup -x 0 -y S -w 55% -h 60% -E "CALLER_PANE=#{pane_id} CLAUDE_TMUX_PREVIEW_WIDTH=0 CLAUDE_TMUX_USAGE_FOOTER=0 ~/.claude/hooks/claude-tmux-picker.sh"'
+
+  A popup can't be dismissed by clicking outside it (tmux drops those clicks),
+  so the header's leading `✕ 关闭` is clickable instead.
 - `o` opens the overview: one screen for "I'm back — what's the situation".
   **The first line is the answer** — `5 个有结果等你看`, or `没人等你 · 2 个还在跑`.
   Below it, **one card per tmux session**, most urgent session first, each
