@@ -156,10 +156,17 @@ trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "$JUMP_FI
 # popup where half the width can't be spared. `p` still opens it, at the
 # default 50%, so nothing is lost, only deferred. list-rows.sh reads the same
 # variable and gives the freed columns to the row's task line.
-if [ "${CLAUDE_TMUX_PREVIEW_WIDTH:-50}" = 0 ]; then
-  PREVIEW_WINDOW="right,50%,border-left,wrap,follow,hidden"
+# CLAUDE_TMUX_PREVIEW_SIDE=left mirrors the layout — for a picker opened from
+# the right end of the status bar, where the list should sit on that side.
+if [ "${CLAUDE_TMUX_PREVIEW_SIDE:-right}" = left ]; then
+  side="left"; border="border-right"
 else
-  PREVIEW_WINDOW="right,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,border-left,wrap,follow"
+  side="right"; border="border-left"
+fi
+if [ "${CLAUDE_TMUX_PREVIEW_WIDTH:-50}" = 0 ]; then
+  PREVIEW_WINDOW="$side,50%,$border,wrap,follow,hidden"
+else
+  PREVIEW_WINDOW="$side,${CLAUDE_TMUX_PREVIEW_WIDTH:-50}%,$border,wrap,follow"
 fi
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --header="$PANE_HEADER"
@@ -203,11 +210,13 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   # as "it did something" while nothing was jumped to. The transform answers
   # `accept` in every other case, so this changes nothing you can see.
   --bind "enter:transform:$BIN_DIR/skip-header.sh \"{n}\" enter"
-  # A mouse way out. A popup ignores clicks outside its box (tmux popup.c
-  # drops them), so "click elsewhere to cancel" is impossible here; the
-  # header's leading `✕ 关闭` is the button instead. Only that word closes —
-  # the rest of the header is key hints, and a click there should do nothing.
-  --bind 'click-header:transform:case "$FZF_CLICK_HEADER_WORD" in ✕|关闭) echo abort ;; esac'
+  # Mouse (bin/mouse.sh maps a click to the key it stands for):
+  # single click on a row = Enter on it — no double-click needed; clicking a
+  # header word presses that key (`全部` = a, `预览` = p, `✕ 关闭` closes).
+  # The close word exists because a popup ignores clicks outside its box
+  # (tmux popup.c drops them), so "click elsewhere to cancel" can't be had.
+  --bind "left-click:transform:$BIN_DIR/mouse.sh row \"{n}\" {4}"
+  --bind "click-header:transform:$BIN_DIR/mouse.sh header \"{n}\""
   --bind "q:transform:$BIN_DIR/skip-header.sh \"{n}\" quit q"
   --bind "esc:transform:$BIN_DIR/skip-header.sh \"{n}\" esc"
   --bind "ctrl-x:transform:$BIN_DIR/skip-header.sh \"{n}\" archive")

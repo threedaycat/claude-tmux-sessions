@@ -434,6 +434,9 @@ def fmt_age(rank, secs):
 # reachable) but dimmed and sunk to the bottom (rank 4), and drops out of
 # the ambient status bar entirely. Overridable via env.
 IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
+# See the CLAUDE_TMUX_ONLY filter in the loop below.
+only_ranks = {"done": {1}, "running": {2}, "wait": {-1}}.get(
+    os.environ.get("CLAUDE_TMUX_ONLY", ""))
 
 # Four states, each with a distinct leading icon so it reads by shape, not
 # just colour: WAIT ⏸ (blocked — needs your choice, top priority), RUN ▶
@@ -491,6 +494,11 @@ for pane, e in data.items():
         label, rank = "\033[1;32m✔︎ DONE\033[0m", 1         # finished, not seen yet
     else:
         label, rank = "\033[33m▶︎ RUN \033[0m", 2
+    # CLAUDE_TMUX_ONLY=done|running|wait: just that kind — what a click on
+    # the status bar's `✔ 4` / `▶ 1` / WAIT opens. Same ranks the bar counts
+    # with, so the bar's number and the rows it opens always agree.
+    if only_ranks is not None and rank not in only_ranks:
+        continue
     # Rows sort by tmux's own window.pane index (not status priority), so
     # the picker mirrors the order you see in tmux itself — predictable,
     # and it lines up with the digit-jump numbers. `rank` is kept only for
