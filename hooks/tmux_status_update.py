@@ -62,6 +62,10 @@ import shutil
 import subprocess
 
 STATUS_FILE = os.path.expanduser("~/.claude/tmux-claude-status.json")
+# Which tmux server the status file's pane ids belong to (its pid). Lets
+# prune() tell "tmux was restarted, every id is new" apart from "I'm talking
+# to some other server" — see server_restarted().
+SERVER_FILE = os.path.expanduser("~/.claude/tmux-claude-server.json")
 
 # Maps stable pane coordinates ("session:window.pane" + cwd) to the Claude
 # session_id last seen running there. Unlike STATUS_FILE (keyed by volatile
@@ -871,6 +875,46 @@ def discover_claude_panes(data, panes):
         }
 
 
+def current_server_pid():
+    try:
+        return int(subprocess.check_output(
+            ["tmux", "display", "-p", "#{pid}"], stderr=subprocess.DEVNULL, text=True).strip())
+    except Exception:
+        return None
+
+
+def remember_server(pid):
+    if pid is None:
+        return
+    try:
+        tmp = f"{SERVER_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump({"pid": pid}, f)
+        os.replace(tmp, SERVER_FILE)
+    except Exception:
+        pass
+
+
+def recorded_server_pid():
+    try:
+        with open(SERVER_FILE) as f:
+            return int(json.load(f).get("pid") or 0)
+    except Exception:
+        return 0
+
+
+def is_live_tmux(pid):
+    """Is `pid` a running tmux? The comm check matters: after a reboot the
+    old server's pid can belong to anything, and treating that as "the old
+    server is still up" would block recovery forever."""
+    try:
+        out = subprocess.check_output(["ps", "-p", str(pid), "-o", "comm="],
+                                      stderr=subprocess.DEVNULL, text=True)
+    except Exception:
+        return False
+    return "tmux" in out
+
+
 def prune():
     fields = ["pane_id", "pane_current_command", "pane_title", "session_name",
               "window_index", "window_name", "pane_index", "pane_current_path"]
@@ -893,6 +937,8 @@ def prune():
                 "pane_index": parts[6], "cwd": parts[7],
             }
     cmd_of = {p: i["cmd"] for p, i in panes.items()}
+    server_pid = current_server_pid()
+    trusted = []    # set when this server is known to be the file's server
 
     def apply(data):
         # A pane id is only meaningful relative to one tmux server, and we
@@ -904,14 +950,30 @@ def prune():
         # look dead and silently wipes the whole file. Observed: it ate 20
         # live panes' worth of state.
         #
-        # No overlap is ambiguous — wrong server, or a tmux restart that
-        # renumbered everything — so do nothing. That's self-correcting
-        # either way: entries whose pane is absent are invisible in the UI
-        # anyway (every reader joins against list-panes), and the moment one
-        # live pane registers again there IS an overlap, so the next prune
-        # clears the corpses.
-        if data and not any(pane in cmd_of for pane in data):
+        # No overlap used to mean "do nothing" on the theory that it would
+        # correct itself once a live pane registered via a hook. It didn't
+        # after a tmux restart: nothing registers until you type into a
+        # Claude, so the Claudes restore-claude.sh brought back — and the
+        # discovery below that would have listed them — stayed invisible.
+        #
+        # Pane ids alone can't settle it, though: every server numbers from
+        # %0, so after a restart new ids can collide with old ones and hand
+        # a dead pane's state to an unrelated live one. So check the server
+        # first. The file records which server (pid) it belongs to:
+        #   recorded server dead, this is another one  -> tmux was restarted:
+        #       every entry is a corpse — drop them all and rediscover, which
+        #       is what makes Claudes resumed by restore-claude.sh show up;
+        #   recorded server still a live tmux          -> possibly the wrong
+        #       server: touch nothing;
+        #   no record yet (first run of this code)     -> the overlap rule.
+        rec = recorded_server_pid()
+        if rec and server_pid and rec != server_pid:
+            if is_live_tmux(rec):
+                return
+            data.clear()
+        elif data and not any(pane in cmd_of for pane in data):
             return
+        trusted.append(True)
         for pane in list(data):
             if pane not in cmd_of or cmd_of[pane] in SHELLS:
                 del data[pane]
@@ -920,6 +982,11 @@ def prune():
         discover_claude_panes(data, panes)
 
     with_status_file(apply)
+    # Only a server we know the file belongs to may become the recorded one;
+    # recording whatever server we happened to reach would let a wrong-server
+    # reader overwrite it and break the restart check above.
+    if trusted:
+        remember_server(server_pid)
     # prune runs from status-badge.sh on every status render, which makes
     # this the badges' heartbeat: it retires panes that died without
     # SessionEnd and ages unread DONEs into their dim form.
