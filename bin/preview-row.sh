@@ -50,9 +50,11 @@ if [ -n "$pane" ]; then
   # `--preview-window` is one global setting, so "no follow for team rows"
   # is not expressible per row.
   #
-  # Anchoring to the bottom also happens to be where Claude Code puts its
-  # own statusline, so the preview now reads the same way the pane does.
-  tmux capture-pane -p -e -S -200 -t "$pane" 2>&1 || echo "(pane 已关闭或无法读取)"
+  # The bottom is also where Claude Code keeps its input box, statusline and
+  # mode hint — in a short preview (a float sized to its rows) that furniture
+  # was all you saw. strip-chrome.py cuts it so the last lines are Claude's.
+  { tmux capture-pane -p -e -S -200 -t "$pane" 2>/dev/null || echo "(pane 已关闭或无法读取)"; } \
+    | python3 "$BIN_DIR/strip-chrome.py"
   python3 "$BIN_DIR/session-digest.py" --pane "$pane" 2>/dev/null || true
   exit 0
 fi
