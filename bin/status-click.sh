@@ -9,7 +9,8 @@
 #   quota        refresh the 5h/7d usage now, then a card with the numbers
 #   w%<pane>     jump to that waiting (blocked) Claude
 #   done         picker, just the finished-unread panes, from the right
-#   running      picker, just the running panes, from the right
+#   running      picker, just the running panes
+#   read         picker, just the finished-and-seen panes
 #
 # Anything else (plain status-right text) is ignored. The window list is not
 # routed here — the binding keeps tmux's own switch-client for that.
@@ -20,5 +21,5 @@ range="${1:-}"; pane="${2:-}"; client="${3:-}"
 case "$range" in
   quota)        exec "$BIN_DIR/usage-refresh.py" --force --notify --client "$client" ;;   # then a card with the numbers
   w%*)          exec "$BIN_DIR/jump-top.sh" "${range#w}" ;;
-  done|running) CLAUDE_TMUX_USAGE_FOOTER=0 exec "$BIN_DIR/float-picker.sh" "$pane" "$range" ;;
+  done|running|read) CLAUDE_TMUX_USAGE_FOOTER=0 exec "$BIN_DIR/float-picker.sh" "$pane" "$range" ;;
 esac

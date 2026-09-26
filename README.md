@@ -328,7 +328,7 @@ What each segment does when clicked:
 |---|---|
 | `5h▂▃ 7d▁█` | refresh the real 5h / 7d usage now (`⟳` while it runs), then a card with the numbers and time to reset |
 | `⏸︎ <window>` | jump to that waiting Claude |
-| `✔︎ 4` / `▶︎ 1` | the picker with just those panes |
+| `✔︎ 4` / `▶︎ 1` / `✓︎ 8` | the picker with just those panes (never folded) |
 
 Clicking the same thing again closes the float; clicking another swaps it.
 Clickable words in the picker's header are drawn as grey chips; toggling

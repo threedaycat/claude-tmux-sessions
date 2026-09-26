@@ -92,7 +92,7 @@ IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 
 now = time.time()
 blocked = []            # (elapsed_secs, window_name, pane_id) for blocked-and-unread
-done_unread = running = 0
+done_unread = running = read_count = 0
 for pane, e in data.items():
     if pane not in live or e.get("archived"):
         continue
@@ -105,7 +105,7 @@ for pane, e in data.items():
     if status == "blocked" and not e.get("read"):
         blocked.append((age, win_of.get(pane) or e.get("window_name") or pane, pane))
     elif status in ("done", "input") and e.get("read"):
-        pass                            # already seen — kept out of the bar
+        read_count += 1                 # already seen — quiet, but you do go back to these
     elif status in ("done", "input"):
         # "done" (Stop hook) and "input" (idle, waiting on your next
         # message) both mean "Claude finished, unread" — one DONE count.
@@ -317,7 +317,7 @@ q = quota_segment() if MODE in ("all", "quota") else ""
 if q:
     parts.append(q)
 if MODE == "quota":
-    blocked, done_unread, running = [], 0, 0
+    blocked, done_unread, running, read_count = [], 0, 0, 0
 if blocked:
     blocked.sort(reverse=True)          # longest-waiting named first
     age, name, pane = blocked[0]
@@ -343,6 +343,10 @@ if done_unread:
     parts.append(f"#[range=user|done]#[fg=#5fff00]✔︎ {done_unread}#[norange]")
 if running:
     parts.append(f"#[range=user|running]#[fg=#ffff00]▶︎ {running}#[norange]")
+# ✓ READ last and in the picker's own READ blue: finished and already looked
+# at, so nothing is waiting — but it's where you go to hand out the next job.
+if read_count:
+    parts.append(f"#[range=user|read]#[fg=#5f87d7]✓︎ {read_count}#[norange]")
 
 if parts:
     # No trailing space in quota mode: that half sits at the far right edge.

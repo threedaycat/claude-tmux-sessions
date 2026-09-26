@@ -435,7 +435,7 @@ def fmt_age(rank, secs):
 # the ambient status bar entirely. Overridable via env.
 IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 # See the CLAUDE_TMUX_ONLY filter in the loop below.
-only_ranks = {"done": {1}, "running": {2}, "wait": {-1}}.get(
+only_ranks = {"done": {1}, "running": {2}, "wait": {-1}, "read": {3}}.get(
     os.environ.get("CLAUDE_TMUX_ONLY", ""))
 
 # Four states, each with a distinct leading icon so it reads by shape, not
@@ -468,14 +468,15 @@ by_session = defaultdict(list)
 # team is "in" whichever session its members turned up in.
 teams_in_session = defaultdict(set)
 for pane, e in data.items():
-    # `discovered` panes exist to fill the gaps in the *window list* badges
-    # (see discover_claude_panes) — that was the whole ask. Giving them rows
-    # here was a side effect, and it cost: a dozen extra entries whose only
-    # claim is "a Claude lives here", padding the collapse counts and the
-    # header tallies in the one list whose first job is switching between
-    # the Claudes you actually talk to. They come back the moment one runs
-    # a hook, which is also the moment there's anything to say about it.
-    if pane not in live or e.get("archived") or e.get("discovered"):
+    # `discovered` panes (see discover_claude_panes) used to be skipped here:
+    # they were meant only to fill the window-list badges, and would get a row
+    # once they ran a hook. That turned out to be exactly wrong after a tmux
+    # crash + restore: every Claude restore-claude.sh resumed is discovered,
+    # none has run a hook yet, so the picker showed none of them — the one
+    # moment you most need a list of your Claudes. They're listed now, as the
+    # READ they're recorded as (quiet, foldable), and the bar's ✓ count and
+    # this list agree.
+    if pane not in live or e.get("archived"):
         continue
     _, session, win_idx, window_name, pane_idx, cwd, pane_title = live[pane]
     member = members_by_pane.get(pane)
@@ -735,7 +736,10 @@ for s in sessions_sorted:
     # `f` never collapses: you asked to see the team, and a quiet member is
     # still a member. Collapsing there would hide the very rows the filter
     # was turned on to find.
-    collapse = (not show_all) and (not team_only) and len(hideable) >= MIN_COLLAPSE
+    # Never fold under CLAUDE_TMUX_ONLY: asking for just the READ panes and
+    # getting "⋯ 收起 8 个" would hide the very rows that were asked for.
+    collapse = (not show_all) and (not team_only) and only_ranks is None \
+        and len(hideable) >= MIN_COLLAPSE
     hidden_ids = {e[2] for e in hideable} if collapse else set()
     # The session keeps its own identity — `▾ $7 7` — with the team's
     # numbers appended. Replacing the name with the team's would cost the
