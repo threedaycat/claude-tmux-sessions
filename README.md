@@ -358,6 +358,9 @@ top as the reset approaches — all grey, the window just began; all blue,
 it's about to reset. `status-badge.sh states` / `status-badge.sh quota`
 print the two halves separately, so the Claude states can sit next to the
 session name on the left and the quota at the far right. Clicking the quota
+opens a card at once with the last reading, its time and a ⟳ refreshing mark;
+when the request comes back (~2 s) the card switches to the new numbers,
+unless you've closed it by then. Clicking it
 more than once in 20 s shows the card again without a new request. `bin/usage-refresh.py`
 asks the same endpoint `/usage` does, using the OAuth token Claude Code keeps
 in the Keychain — read in memory for that one request, never written, never
