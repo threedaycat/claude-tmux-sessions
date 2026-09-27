@@ -287,8 +287,8 @@ pane 是真 pane,焦点一走就能关掉它。状态栏上的几段就成了按
 
 再点同一个就关掉,点另一个就换过去。picker 提示栏里能点的词画成灰底按钮;在浮窗里切 `全部` 会按新高度重开浮窗(tmux 只能把浮动 pane 往下拉长)。
 
-每个窗口两格:第一格是用量,从下往上长(▁ → █,绿 → 红);第二格是冷却,灰色从上往下缩 ——
-满格是刚开始,没了就快重置了。`status-badge.sh states` / `status-badge.sh quota` 分别只出一半,
+每个窗口两格:第一格是用量,从下往上长(▁ → █,绿 → 红);第二格是冷却,蓝色从上往下填 ——
+全灰是刚开始,全蓝就快重置了。`status-badge.sh states` / `status-badge.sh quota` 分别只出一半,
 所以 Claude 状态可以放在左边 session 名后面、额度放最右。20 秒内重复点额度只会再弹卡片,不会再发请求。`bin/usage-refresh.py` 调的是 `/usage` 用的同一个接口,
 用 Claude Code 存在钥匙串里的 OAuth 令牌 —— 只在内存里用这一次,不落盘、不代为续期 ——
 每 30 分钟一次(`CLAUDE_TMUX_USAGE_REFRESH_MIN`)或点一下就刷。这个接口不是公开文档化的 API,

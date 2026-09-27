@@ -353,8 +353,8 @@ Clickable words in the picker's header are drawn as grey chips; toggling
 floating pane downward).
 
 Each window is two cells. The first is usage: it grows up from the bottom
-(▁ → █, green → red). The second is a cooldown: a grey block that shrinks
-from the top as the reset approaches — full, the window just began; gone,
+(▁ → █, green → red). The second is a cooldown: it fills with blue from the
+top as the reset approaches — all grey, the window just began; all blue,
 it's about to reset. `status-badge.sh states` / `status-badge.sh quota`
 print the two halves separately, so the Claude states can sit next to the
 session name on the left and the quota at the far right. Clicking the quota

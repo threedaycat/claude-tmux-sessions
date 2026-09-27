@@ -217,15 +217,14 @@ def maybe_refresh(best):
 
 
 GAUGE = "▁▂▃▄▅▆▇█"
-# Time until the window resets, as a cooldown cell: a grey block as tall as
-# the part still to wait, so it shrinks from the top as the reset nears —
-# full = the window just began, gone = it's about to reset. Foreground only:
-# block glyphs are drawn a little narrower than the cell (iTerm2 at least),
-# so any background colour shows down the cell's right edge as an extra bar.
-# The waited-out part used to be a blue background; on ▇ that edge read as a
-# third bar next to 7d.
+# Time until the window resets, as a cooldown cell: the part already waited
+# out fills in deep blue from the top, the part still to wait stays grey at
+# the bottom. All grey = the window just began; all blue = it's about to
+# reset. A cooldown, not a quota: the deep colour means "nearly ready", so it
+# reads as progress towards a refill rather than as something being spent.
 WINDOW_SECS = {"5h": 5 * 3600, "7d": 7 * 86400}
-TIME_WAIT = "#585858"       # grey: still to wait
+TIME_DONE = "#0087d7"       # deep: cooldown already waited out (top)
+TIME_WAIT = "#585858"       # grey: still to wait (bottom)
 
 
 def level(frac, n):
@@ -238,15 +237,20 @@ def time_left_glyph(label, dt):
         return ""
     left = (dt - datetime.now().astimezone()).total_seconds()
     waiting = max(0.0, min(1.0, left / WINDOW_SECS.get(label, 5 * 3600)))
-    k = round(waiting * len(GAUGE))            # eighths still to wait
+    k = round(waiting * len(GAUGE))            # eighths still to wait (grey, from the bottom)
+    if k >= len(GAUGE):
+        # Nothing waited out yet: plain grey █ with no background — fonts
+        # often draw █ a little narrower than the cell, and a coloured
+        # background down its edge reads as a second bar.
+        return f"#[fg={TIME_WAIT}]█#[default]"
     glyph = GAUGE[k - 1] if k else " "
-    return f"#[fg={TIME_WAIT}]{glyph}#[default]"
+    return f"#[fg={TIME_WAIT},bg={TIME_DONE}]{glyph}#[default]"
 
 
 def window_segment(label, w, with_reset=False):
     """`5h▂▄`: a dim label, a block for how much is used (grows up, ▁ → █,
-    coloured green → red), then a grey cooldown cell that shrinks from the
-    top as the reset approaches (see time_left_glyph). No numbers in the
+    coloured green → red), then a cooldown cell that fills with blue from
+    the top as the reset approaches (see time_left_glyph). No numbers in the
     bar — a click opens a card with them (usage-refresh.py --notify)."""
     pct = (w or {}).get("utilization")
     if pct is None:
@@ -345,6 +349,10 @@ if read_count:
     parts.append(f"#[range=user|read]#[fg=#5f87d7]✓︎ {read_count}#[norange]")
 
 if parts:
-    # No trailing space in quota mode: that half sits at the far right edge.
-    print("  ".join(parts) + ("#[default]" if MODE == "quota" else "#[default] "))
+    # A trailing plain space in quota mode too, although that half sits at
+    # the far right edge: iTerm2 paints the few pixels right of the last
+    # column (the window rarely divides into whole cells) in the last cell's
+    # background. Ending on the 7d cooldown cell, that margin came out as a
+    # third blue bar next to it.
+    print("  ".join(parts) + "#[default] ")
 PYEOF
