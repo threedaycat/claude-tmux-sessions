@@ -283,7 +283,7 @@ def quota_segment():
         except Exception:
             pass
     return ("#[range=user|quota]" + window_segment("5h", best.get("five_hour"))
-            + "  " + window_segment("7d", best.get("seven_day"))
+            + " " + window_segment("7d", best.get("seven_day"))
             + refresh_state(best) + "#[norange]")
 
 
