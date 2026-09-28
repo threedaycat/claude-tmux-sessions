@@ -352,6 +352,9 @@ def safe_title(title):
     else's guarantee. **Do not delete this on the grounds that prune covers
     it.**"""
     t = (title or "").strip()
+    # Claude Code 把状态字形写在终端标题最前面（✳ 空闲、◐◑ 在跑），那是状态不是名字，
+    # 名字列里已经有一整列状态图标了，再带一个只是噪声。
+    t = t.lstrip("✳◐◑◒◓●○· \t")
     if not t or t in _DEFAULT_TITLES:
         return ""
     user = getpass.getuser() if _DEFAULT_TITLES else ""
@@ -380,12 +383,18 @@ def display_name(pane, rec, window_name, pane_title, member):
          is its agent type, which is the same word on every team's lead. So
          the more informative source is the lower one, exactly the case this
          level exists to catch in the other direction.
-      3. a generated name — a few characters saying which feature the
+      3. pane_title — 这一格自己的标题，per-pane and clean。你手动改过窗口/
+         标题的话它就是你写的那个；没改过则是 Claude Code 按这轮对话写进去的
+         终端标题。两种都比下面那个「猜出来的」贴谱，所以它排在生成名之前
+         —— 2026-09-28 之前反过来，于是 `✳ journal` 的那一格显示成「新闻」、
+         `✳ 旅行对话意图识别问题` 显示成「I cannot determi」（模型拒答的残片）。
+         Falls through when empty, or when it's really the shell's default
+         (see safe_title).
+      4. a generated name — a few characters saying which feature the
          session works on, sampled from the whole session and then frozen
          (session_label.py). Falls through until the background worker has
-         produced one, and never answers for a hand-named session.
-      4. pane_title — per-pane and clean. Falls through when empty, or when
-         it's really the shell's default (see safe_title).
+         produced one, and never answers for a hand-named session. 只在这一格
+         连标题都没有时才用得上。
       5. window_name — the old source. Several Claude panes sharing one
          tmux window all write to it, so it arrives as their titles
          concatenated in an order none of them agree on.
@@ -416,9 +425,9 @@ def display_name(pane, rec, window_name, pane_title, member):
     if member and member.get("is_mate") and member.get("name"):
         return member["name"]
     return (
-        label_of.get(pane, "")
-        or safe_title(pane_title)
-        or (window_name or "").strip()
+        safe_title(pane_title)
+        or label_of.get(pane, "")
+        or safe_title(window_name)
         or (rec.get("session_id") or "")[:8]
         or pane
     )
