@@ -123,21 +123,12 @@ if teams_snap is not None and not teams_snap["teams"]:
     teams_snap = None          # the directory exists but holds nothing readable
 members_by_pane = teams_snap["by_pane"] if teams_snap else {}
 
-# Level 1 of the naming chain: the name somebody chose for a session, which
-# Claude Code keeps in its own files rather than anywhere the hooks can see
-# (see claude_sessions.py). Gated on the same one stat as teams and for the
-# same reason — nobody without the directory reads a byte or imports a
-# module — except that this one is not a feature you switch on, so the
-# people it degrades for are the people who never renamed a session, and
-# for them the chain answers at level 2 or 3 exactly as before.
-manual_names = {}
-if bin_dir and os.path.isdir(os.path.join(_claude_home, "sessions")):
-    try:
-        sys.path.insert(0, bin_dir)
-        import claude_sessions
-        manual_names = claude_sessions.manual_names()
-    except Exception:
-        manual_names = {}      # a broken read means "no chosen names", never a broken list
+# 名字列不再有「自己造的」来源。删掉的两级：
+#   - claude_sessions.py 读 Claude Code 的 /rename 名字 —— 冗余：Claude Code
+#     本来就把那个名字写进终端标题，本机 9 个改过名的窗格和 pane_title 一字不差。
+#   - session_label.py 在后台起 `claude -p` 让小模型给会话编一个短名 —— 每个
+#     窗格都有标题，这一级永远轮不到；它还挂在每轮 Stop 钩子上，白烧一个进程。
+# 现在剩下的三样都是现成的：pane_title、tmux 窗口名、会话 id（见 display_name）。
 
 # What each pane is working on — its opening ask, which fills the trailing
 # field the cwd used to have (see session_task.py for why that trade is
@@ -152,19 +143,6 @@ if bin_dir and os.path.isdir(os.path.join(_claude_home, "projects")):
         task_of = session_task.tasks(data)
     except Exception:
         task_of = {}           # a broken read means "no tasks", never a broken list
-
-# Level 3 of the naming chain: a short generated name for every session
-# nobody named by hand (see session_label.py). Reads a cache only; sessions
-# without a name yet get one from a background worker, in time for the next
-# render. Same gate and same failure rule as the task field above.
-label_of = {}
-if bin_dir and os.path.isdir(os.path.join(_claude_home, "projects")):
-    try:
-        sys.path.insert(0, bin_dir)
-        import session_label
-        label_of = session_label.labels(data, skip=set(manual_names))
-    except Exception:
-        label_of = {}          # a broken read means "no generated names", never a broken list
 
 fmt = ("#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}"
        "\t#{pane_index}\t#{pane_current_path}\t#{pane_title}")
@@ -366,67 +344,31 @@ def safe_title(title):
 def display_name(pane, rec, window_name, pane_title, member):
     """What to call this pane in the name column, best source first.
 
-    Six levels. Each one falls through for a *different* reason, which is
-    what makes this a chain rather than a couple of branches:
+      1. the team roster's name — teammates only, and the only source that
+         says *who* a pane is. A lead falls through: its roster name is its
+         agent type, the same word on every team's lead, while its
+         pane_title is the session summary — the more informative source is
+         the lower one, which is exactly what this level exists to catch in
+         the other direction.
+      2. pane_title — this pane's own title. `/rename` 过的会话就是你起的那个
+         名字（Claude Code 自己把它写进终端标题），没改过的则是 Claude Code
+         按这轮对话写的。Falls through when empty, or when it's really the
+         shell's default (see safe_title).
+      3. window_name — 几个 Claude 共用一个 tmux 窗口时它们会互相覆盖，所以
+         垫在 pane_title 下面。
+      4. the session id, shortened — falls through to the pane id. 它唯一的
+         职责是保证这个函数没有一条路径会返回空字符串：名字难看还能救，没有
+         名字不能。It prefers the session id because that survives what a pane
+         id doesn't — a tmux server restart renumbers every pane, while the
+         session id is the same value before and after.
 
-      1. a hand-picked session name — the only source where somebody stated
-         outright what this session is called, so it outranks everything
-         automatic. Read from Claude Code's own session records, keyed by
-         session id (see claude_sessions.py); it was a reserved empty slot
-         until those were found, because the status file has no such field
-         and neither does any hook payload. Falls through for every session
-         nobody renamed, which is most of them — a *generated* name is
-         deliberately not accepted here.
-      2. the team roster's name — the only source that says *who* a pane
-         is. Teammates only: a lead's row keeps falling through to levels 3-4,
-         because its `pane_title` is the session summary and its roster name
-         is its agent type, which is the same word on every team's lead. So
-         the more informative source is the lower one, exactly the case this
-         level exists to catch in the other direction.
-      3. pane_title — 这一格自己的标题，per-pane and clean。你手动改过窗口/
-         标题的话它就是你写的那个；没改过则是 Claude Code 按这轮对话写进去的
-         终端标题。两种都比下面那个「猜出来的」贴谱，所以它排在生成名之前
-         —— 2026-09-28 之前反过来，于是 `✳ journal` 的那一格显示成「新闻」、
-         `✳ 旅行对话意图识别问题` 显示成「I cannot determi」（模型拒答的残片）。
-         Falls through when empty, or when it's really the shell's default
-         (see safe_title).
-      4. a generated name — a few characters saying which feature the
-         session works on, sampled from the whole session and then frozen
-         (session_label.py). Falls through until the background worker has
-         produced one, and never answers for a hand-named session. 只在这一格
-         连标题都没有时才用得上。
-      5. window_name — the old source. Several Claude panes sharing one
-         tmux window all write to it, so it arrives as their titles
-         concatenated in an order none of them agree on.
-      6. the session id, shortened — falls through to the pane id.
-
-    Levels 1 and 2 can in principle both answer; a hand-picked name wins
-    because it is chosen later than the roster name, which is fixed when a
-    teammate is spawned. In practice they barely overlap: teammates don't
-    get renamed by hand.
-
-    Level 2 subsumes "is this pane on a team": a roster hit *is*
-    membership, so nothing tests for it separately. The lead needs no
-    special case either — it falls to levels 3-4, and its pane_title is the
-    session summary, which is exactly what its row should say. A branch for
-    the lead would replace a right answer with a bespoke one.
-
-    Level 6's only job is to guarantee this function has no path that
-    returns an empty string; a row with an ugly name is recoverable, a row
-    with no name is not. It prefers the session id because that survives
-    what a pane id doesn't — a tmux server restart renumbers every pane,
-    while the session id is the same value before and after. The trailing
-    `or pane` is there because the session id is a recorded *value* and can
-    be missing, whereas the pane id is the key the record is filed under
-    and structurally cannot be."""
-    manual = manual_names.get((rec.get("session_id") or "").strip(), "")
-    if manual:
-        return manual
+    2026-09-28 删掉了两级自己造的来源（见文件开头的说明）：读 Claude Code
+    /rename 名字的 claude_sessions.py（和 pane_title 重复），和让小模型给会话
+    编短名的 session_label.py（每个窗格都有标题，永远轮不到它）。"""
     if member and member.get("is_mate") and member.get("name"):
         return member["name"]
     return (
         safe_title(pane_title)
-        or label_of.get(pane, "")
         or safe_title(window_name)
         or (rec.get("session_id") or "")[:8]
         or pane

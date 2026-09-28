@@ -993,25 +993,6 @@ def prune():
     sync_window_badges()
 
 
-def ensure_label(sid):
-    """Once a turn: keep this pane's generated name (`@claude_label`, see
-    bin/session_label.py) current, and start naming it if it has no name.
-    The hook is installed as a symlink, so bin/ is found through it. A
-    session renamed by hand has its generated name cleared instead."""
-    pane = os.environ.get("TMUX_PANE")
-    if not pane or not sid:
-        return
-    try:
-        bin_dir = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.realpath(__file__))), "bin")
-        sys.path.insert(0, bin_dir)
-        import claude_sessions
-        import session_label
-        session_label.ensure(pane, sid, manual=claude_sessions.name_of(sid))
-    except Exception:
-        pass
-
-
 def main():
     if len(sys.argv) < 2:
         return
@@ -1024,8 +1005,6 @@ def main():
         except Exception:
             pass
         record_status(mode, stdin_data)
-        if mode == "done":
-            ensure_label(stdin_data.get("session_id"))
     elif mode == "notify":
         record_notification()
     elif mode == "unblock":

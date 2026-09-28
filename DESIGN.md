@@ -649,90 +649,29 @@ byte-for-byte:
 - pane naming got more accurate for everyone, and visibly so for anyone
   stacking Claude panes in a single window
 
-**Naming a pane.** Five sources, best first, each falling through for its
+**Naming a pane.** Four sources, best first, each falling through for its
 own reason:
 
 | | source | falls through when |
 |---|---|---|
-| 1 | a hand-picked session name (`~/.claude/sessions/`) | nobody renamed this session |
-| 2 | the team roster's `name` | the pane isn't on a team |
-| 3 | `pane_title` | empty, or really the shell's default |
-| 4 | `window_name` | empty |
-| 5 | the session id, then the pane id | never |
+| 1 | the team roster's `name` | the pane isn't on a team, or is its lead |
+| 2 | `pane_title` | empty, or really the shell's default |
+| 3 | `window_name` | empty |
+| 4 | the session id, then the pane id | never |
 
-**Level 1 is read, not recorded.** It was a reserved empty slot for three
-commits because the obvious place to fill it from does not exist: the
-status file this repo writes has no such field, and no hook payload carries
-one either — checked against the binary, not assumed. Claude Code keeps the
-name in files of its own, `~/.claude/sessions/{pid}.json`, and
-`bin/claude_sessions.py` is the one parser for them (same rule as
-`agent_teams.py`: two parsers for a format we don't own drift the first
-time it moves).
+**两级删掉了（2026-09-28）。** 原来最前面还有「有人亲手起的会话名」，由
+`bin/claude_sessions.py` 解析 `~/.claude/sessions/{pid}.json`；`pane_title`
+和 `window_name` 之间还夹着一级「小模型编的短名」（`bin/session_label.py`，
+后台 `claude -p`）。两级都是这个仓库自己造的机器，也都被实测判了多余：
 
-Three things about those files decide how they are read, and all three are
-properties of the format rather than choices:
+- `/rename` 起的名字，Claude Code 本来就写进终端标题 —— 本机 9 个改过名的
+  窗格，会话名和 `pane_title` 一字不差，一个例外都没有。
+- 生成的短名只在「这一格连标题都没有」时才轮得到，而被跟踪的窗格没有一个
+  缺标题。它却挂在每轮 Stop 钩子上，每个还没起名的会话都要另起一个 `claude`
+  进程去问一次小模型。
 
-- **Only names a person chose are accepted.** Claude Code names every
-  session, mostly by derivation from the cwd, and marks those
-  `nameSource: "derived"`. A derived name is *worse* than what levels 3-4
-  already produce — it is the directory, which the row's trailing field
-  already says — so promoting one would make the column less accurate for
-  everybody who has never renamed anything. The test is "the field is
-  absent", which is what `/rename` leaves behind, and it is deliberately
-  the strict reading: a future `nameSource: "user"` would be rejected and
-  nothing visible would change, while the loose reading would let a future
-  `nameSource: "auto"` through and quietly downgrade the column for people
-  who have nothing to do with any of this. There is a second reason to be
-  strict, and it is the same one `safe_title()` exists for: a name derived
-  from a cwd under `$HOME` can be derived from `$HOME` *itself*, and then
-  the "name" is the operator's login name. Rejecting derived names keeps
-  that out of a list people screenshot without needing a second guard.
-- **The files are keyed by pid, the picker is keyed by session.** A crashed
-  Claude leaves its file behind and a resumed session writes a second one,
-  so the lookup indexes by `sessionId` — the only key both sides hold — and
-  the larger `updatedAt` wins a collision. `status` is not used for it:
-  `idle`/`busy` says what a session was doing, never whether the process is
-  still alive.
-- **Reading is why this is on the render path and not in the hook.** The
-  hook would write the name once into the status entry and both renderers
-  would get it for free, which is tempting and wrong: the value would then
-  be as old as that pane's last status change. Renaming a session and
-  immediately opening the picker is precisely the moment the feature is
-  used, and an idle pane has no next status change to refresh it. Reading
-  costs one `listdir` plus one small parse per file, memoised per process
-  — measured at ~25µs a file, so ~12ms against a synthetic 500-file
-  directory, against a startup path that already costs ~100ms.
-
-Degradation is the same one stat as teams: no `~/.claude/sessions/`, no
-import, no read, and the chain answers at level 2 or 3 exactly as before —
-verified by diffing the row output against the previous version with
-`CLAUDE_HOME` pointed at an empty directory.
-
-> One visible consequence for anyone who *has* renamed a session: Claude
-> Code writes a spinner glyph into `pane_title` alongside the name, so
-> level 3 was returning `✳ agi-docs`, and while Claude is working the glyph
-> is an animating braille frame that changes the row between renders. Level
-> 1 returns the name alone. Sessions nobody renamed still show the glyph;
-> that is level 3 behaving as it always has.
-
-Level 3 is why this is worth doing at all: several Claude panes sharing
-one tmux window all write to the same `window_name`, so it arrives as
-their titles concatenated in an order none of them agree on, while
-`pane_title` stays per-pane and clean — and it still is why, because level
-1 answers only for sessions somebody bothered to name. Level 2 doubles as the membership
-test — a roster hit *is* membership, so nothing tests for it separately —
-and the lead needs no special case, because it falls through to level 3
-and its `pane_title` is the session summary, which is what its row should
-say. Level 5 prefers the session id because a tmux server restart
-renumbers every pane while the session id survives it; its only job is to
-guarantee no path returns an empty name.
-
-> `pane_title` falls back to the machine's user and host name when nothing
-> has set it. `safe_title()` in both renderers drops those rather than
-> print them into a list people screenshot. `prune()` should already keep
-> such panes out of the list, but that invariant lives in another file and
-> guards something else — don't delete the check because it looks
-> redundant.
+删掉之后名字列只读现成的东西：Claude Code 写的终端标题、tmux 的窗口名、
+会话 id。少了两个文件、一个后台工作者、一条每轮都跑的钩子分支。
 
 **Rows.** A team adds no rows at all. It is summarised on the header of the
 session it is running in — `▾ $7 7  ✔ 1  ▶ 1  编队 队员 3 · 待领 2` — and
@@ -1403,8 +1342,8 @@ today's numbers, which is the one failure mode a page like this must not have.
 **The ranking finally has session names in it.** It used to print `sid[:8]` — the
 one thing about a session that means nothing to the person reading it. The chain
 is the picker's chain (`list-rows.sh`), joined to a transcript through the status
-file's `session_id`: a name someone chose (`claude_sessions.py`) → the Agent
-Teams roster name → the pane title → the tmux window name. Below that sits one
+file's `session_id`: the Agent Teams roster name → the pane title → the tmux
+window name. Below that sits one
 level the picker doesn't have: **a session's opening prompt**, which is the only
 human-readable label a transcript with no live pane has left. It is marked dim in
 the list and titled `未命名会话` in the card, because a sentence is not a name and

@@ -232,16 +232,12 @@ The substitution drops *one* leading non-ASCII character plus its space — tmux
 reach for a `{1,4}`-style quantifier: the `}` closes the `#{...}` and the whole
 format silently falls apart.
 
-**A short feature name for sessions nobody named.** Claude's own title is the
-opening ask — often a question, a sentence long, and never updated. With several
-Claude sessions in one project, what tells them apart is which feature each one
-is building. So for every session without a `/rename`, `bin/session_label.py`
-asks haiku in the background, from messages sampled across the whole session,
-for a 2–6 character (or 1–3 word) name, cached by session id in
-`~/.claude/tmux-claude-labels.json`. A name is decided once and kept; it is only
-redone if the session was still young when named and has since grown fourfold.
-The picker's name column uses it, and it is written to the pane option
-`@claude_label` for window names:
+The name column has no home-grown source any more: a session you `/rename`d is
+already written into the terminal title by Claude Code, so the picker just reads
+`pane_title`; a session you didn't rename has Claude Code's own title there.
+(2026-09-28 removed `bin/session_label.py`, which asked a small model to invent a
+name, and `bin/claude_sessions.py`, which parsed the `/rename` name — the first
+was never reached, the second duplicated the terminal title.)
 
 ```tmux
 set -g window-status-format '#I#{E:@claude_win} #{?#{@claude_label},#{@claude_label},#{s|^[^ -~] ||:window_name}}'
@@ -409,7 +405,8 @@ Claude panes sharing one window they aren't — the window title is all of their
 titles concatenated — so those rows now show each pane's own name instead of
 the same jumble repeated.
 
-A session you renamed yourself with `/rename` is shown by that name, ahead of
+A session you renamed yourself with `/rename` is shown by that name (Claude Code
+puts it in the terminal title, which is what the picker reads), ahead of
 every automatic source. Only names you chose count — Claude Code also
 generates one for every session, and a generated name is just the directory,
 which the row already tells you at the other end. Nothing changes if you have

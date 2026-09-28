@@ -200,10 +200,10 @@ set -g window-status-format '#I#{E:@claude_win} #{s|^[^ -~] ||:window_name}'
 
 **给没起名的会话一个短的功能名。** Claude 自己的标题是第一句话 —— 往往是个问句、一句话长,
 而且之后不再更新。同一个项目开好几个 Claude 时,真正分得开它们的是「各自在做哪块功能」。
-所以对没 `/rename` 过的会话,`bin/session_label.py` 会在后台让 haiku 从整个会话里均匀抽样
-你说过的话,起一个 2–6 字(或 1–3 个英文词)的名字,按会话 id 缓存在
-`~/.claude/tmux-claude-labels.json`。起一次就固定,只有起名时会话还很短、之后长到 4 倍大
-才重起一次。picker 的名字列会用它,它也会写进 pane 选项 `@claude_label`,窗口名想用的话:
+名字列不再有自己造的来源：`/rename` 过的会话,Claude Code 本来就把那个名字写进终端标题,
+picker 直接读 `pane_title`;没改过的,那里也是 Claude Code 按这轮对话写的标题。
+（2026-09-28 删掉了让小模型编短名的 `bin/session_label.py`,和读 `/rename` 名字的
+`bin/claude_sessions.py` —— 前者永远轮不到,后者和终端标题重复。）
 
 ```tmux
 set -g window-status-format '#I#{E:@claude_win} #{?#{@claude_label},#{@claude_label},#{s|^[^ -~] ||:window_name}}'
@@ -323,7 +323,7 @@ tmux window 的标题。**独占一个 window 的 pane,两者是同一个字符�
 Claude pane 挤在同一个 window 里时两者不同 —— window 标题是它们几个的标题拼起来的一长串 ——
 所以这些行现在显示各自的名字,不再是同一坨东西重复几遍。
 
-你自己用 `/rename` 起过名的会话,列表里就用那个名字,**排在所有自动来源前面**。
+你自己用 `/rename` 起过名的会话,列表里就用那个名字 —— Claude Code 会把它写进终端标题,picker 读的就是它。
 只认你自己起的:Claude Code 也会给每个会话自动生成一个名字,而那个名字就是目录名 ——
 行尾本来就写着。**从没改过名的人不受任何影响。**
 
