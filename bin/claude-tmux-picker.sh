@@ -178,10 +178,14 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
   --preview-window="$PREVIEW_WINDOW"
   --preview-label=' Claude 实时画面 '
-  # 滚轮走和 j/k 完全一样的路：fzf 自带的 scroll 只是把光标挪一行，会停到另一级的行上
-  # （pane 级滚着滚着就选中了 session 表头）。交给 skip-header.sh 就自动跳过不该停的行。
-  --bind "scroll-down:transform:$BIN_DIR/skip-header.sh \"{n}\" down"
-  --bind "scroll-up:transform:$BIN_DIR/skip-header.sh \"{n}\" up"
+  # 滚轮用 fzf 内置的 up/down，不走 transform —— 这是唯一能做到瞬时的做法。
+  # 走 transform 的话每一格都要 fork 一个进程：这台机器上 fork+exec 的硬地板就有 4.7ms
+  # （/bin/echo 实测），skip-header.sh 一趟 18ms，而一次快速滑动能甩出几十个滚轮事件，
+  # 滑过列表末尾之后每一格照样要花这 18ms —— 60 格就积到 1.1 秒，正是「滚起来非常卡」。
+  # 代价：滚动时高亮会从 session 表头行上经过（停在那儿按回车会跳到那个 session）。
+  # j/k 仍然走 skip-header.sh，照样跳过表头；单击某一行直接跳转，也不受光标停在哪影响。
+  --bind "scroll-down:down"
+  --bind "scroll-up:up"
   --bind "down:transform:$BIN_DIR/skip-header.sh \"{n}\" down"
   --bind "up:transform:$BIN_DIR/skip-header.sh \"{n}\" up"
   --bind "left:transform:$BIN_DIR/skip-header.sh \"{n}\" left"
