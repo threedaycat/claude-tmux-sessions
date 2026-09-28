@@ -178,14 +178,16 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
   --preview-window="$PREVIEW_WINDOW"
   --preview-label=' Claude 实时画面 '
-  # 滚轮用 fzf 内置的 up/down，不走 transform —— 这是唯一能做到瞬时的做法。
-  # 走 transform 的话每一格都要 fork 一个进程：这台机器上 fork+exec 的硬地板就有 4.7ms
-  # （/bin/echo 实测），skip-header.sh 一趟 18ms，而一次快速滑动能甩出几十个滚轮事件，
-  # 滑过列表末尾之后每一格照样要花这 18ms —— 60 格就积到 1.1 秒，正是「滚起来非常卡」。
-  # 代价：滚动时高亮会从 session 表头行上经过（停在那儿按回车会跳到那个 session）。
-  # j/k 仍然走 skip-header.sh，照样跳过表头；单击某一行直接跳转，也不受光标停在哪影响。
-  --bind "scroll-down:down"
-  --bind "scroll-up:up"
+  # 滚轮分两层、又不起进程：session 级只在 session 行之间滚，pane 级只在 pane 行之间滚
+  # （用户 2026-09-28：「分两层滚动……两个不要混在一起滚动」）。
+  # 走 transform 的话每一格都要 fork 一个进程（skip-header.sh 一趟 18ms，快速一滑几十格
+  # 积到一秒多），所以滚轮只用 fzf 内置的 down-match/up-match：raw 模式下所有行照常显示，
+  # 光标只停在「匹配」的行上。每一行行尾带一个零宽暗号（list-rows.sh：U+2060 session 表头，
+  # U+200B pane 行），skip-header.sh 换级时发 search(当前级的暗号)，匹配的就只剩本级的行。
+  # nomatch:regular / gutter-raw=▌：不匹配的行照原样画，看不出区别。
+  --raw --color=nomatch:regular --gutter-raw=▌
+  --bind "scroll-down:down-match"
+  --bind "scroll-up:up-match"
   --bind "down:transform:$BIN_DIR/skip-header.sh \"{n}\" down"
   --bind "up:transform:$BIN_DIR/skip-header.sh \"{n}\" up"
   --bind "left:transform:$BIN_DIR/skip-header.sh \"{n}\" left"

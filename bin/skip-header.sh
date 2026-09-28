@@ -110,6 +110,14 @@ mode="pane"
 if [ -n "${MODE_FILE:-}" ] && [ -s "$MODE_FILE" ]; then
   mode=$(<"$MODE_FILE")          # $(cat) 会 fork；滚轮一秒几十次，省得起进程
 fi
+mode_before="$mode"
+
+# 滚轮只停在本级的行上（见 claude-tmux-picker.sh 的 down-match）：换级时让 fzf 改成匹配
+# 这一级的零宽暗号。$'\xHH' 而不是 $'\u…'：macOS 自带的 bash 3.2 不认 \u。
+TAG_SESSION=$'\xe2\x81\xa0' TAG_PANE=$'\xe2\x80\x8b'
+level_search() {  # level_search <mode> → "search(暗号)+"
+  if [ "$1" = session ]; then printf 'search(%s)+' "$TAG_SESSION"; else printf 'search(%s)+' "$TAG_PANE"; fi
+}
 
 # Which lead's team is unfolded, as a row index (empty = none). `l` on a
 # lead row sets it, `h` on one of its teammates clears it, and so does
@@ -350,7 +358,8 @@ if [ "${FZF_INPUT_STATE:-disabled}" = "enabled" ]; then
     # substituting {n} in, which is what made that particular Esc
     # unescapable. `search()` re-runs the search against the now-empty
     # query and forces the full list back before search is switched off.
-    esc)   echo "clear-query+search()+disable-search+hide-input+change-header($(chips "$(mode_header)"))" ;;
+    # 退出搜索时顺带回到 raw 模式、按当前这一级的暗号重新匹配（进搜索时关了 raw，见 slash）。
+    esc)   echo "clear-query+enable-raw+$(level_search "$mode")disable-search+hide-input+change-header($(chips "$(mode_header)"))" ;;
     enter) echo "accept" ;;
     *)     echo "ignore" ;;
   esac
@@ -530,7 +539,7 @@ reload_keeping_place() {
   else
     hdr="$(mode_header)"
   fi
-  echo "change-header($(chips "$hdr"))+reload-sync(cat '$ROWS_FILE')+pos(${pos:-1})"
+  echo "change-header($(chips "$hdr"))+reload-sync(cat '$ROWS_FILE')+$(level_search "$mode")pos(${pos:-1})"
 }
 
 # fzf fires `load` every time the list finishes loading — including after
@@ -553,7 +562,7 @@ if [ "$dir" = "init" ]; then
     [ -n "${MODE_FILE:-}" ] && printf '%s' "$mode" > "$MODE_FILE"
     # 表头也得跟着换。fzf 的 --header 是按 pane 级的文字起的，开在 session 级时不改它，
     # 提示就还写着「j/k 选窗口 · h session」，和实际按键行为对不上。
-    echo "change-header($(chips "$(mode_header "$CALLER_POS")"))+pos($CALLER_POS)"
+    echo "$(level_search "$mode")change-header($(chips "$(mode_header "$CALLER_POS")"))+pos($CALLER_POS)"
     exit 0
   fi
 fi
@@ -561,7 +570,8 @@ fi
 # Navigation mode from here on.
 case "$dir" in
   slash)
-    echo "show-input+enable-search+change-header($(chips "$SEARCH_HEADER"))"
+    # 搜索时关掉 raw：不然没搜中的行也照样显示，只是不能停。
+    echo "disable-raw+show-input+enable-search+change-header($(chips "$SEARCH_HEADER"))"
     exit 0
     ;;
   showall)
@@ -937,9 +947,12 @@ fi
 # 卡顿（2026-09-28 用户报「滚 picker 特别卡」，当时 load 8.7）。所以记住上一次的原文，
 # 一样就只发 pos()。表头没变时 $HEADER_FILE（给 mouse.sh 查列用的）本来也不需要重写。
 _hdr=$(mode_header "$idx")
+# 换了级（h/l、点表头的 session 键）或第一次加载：滚轮要改停另一级的行。
+_srch=""
+{ [ "$mode" != "$mode_before" ] || [ "$dir" = init ]; } && _srch=$(level_search "$mode")
 if [ -n "${HEADER_RAW_FILE:-}" ] && [ -f "$HEADER_RAW_FILE" ] && [ "$_hdr" = "$(<"$HEADER_RAW_FILE")" ]; then
-  echo "pos($idx)"
+  echo "${_srch}pos($idx)"
 else
   [ -n "${HEADER_RAW_FILE:-}" ] && printf '%s' "$_hdr" > "$HEADER_RAW_FILE"
-  echo "change-header($(chips "$_hdr"))+pos($idx)"
+  echo "${_srch}change-header($(chips "$_hdr"))+pos($idx)"
 fi

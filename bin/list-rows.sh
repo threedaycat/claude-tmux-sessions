@@ -76,7 +76,9 @@ if [ -n "${CLAUDE_TMUX_EXTRA_CMD:-}" ] && [ -x "${CLAUDE_TMUX_EXTRA_CMD}" ]; the
                { if (all == "1" || n < keep) { n++; print } else hidden++ }
                END { flush() }' \
            || true)"
-  [ -n "$extra" ] && printf '%s\n' "$extra"
+  # 外部条目跟 pane 一起停、它的分组表头跟 session 表头一起停：同样打上两种暗号（见下面 print 处）。
+  [ -n "$extra" ] && printf '%s\n' "$extra" \
+    | awk -F'\t' -v OFS='\t' '{ $1 = $1 ($5 == "extra" ? "\342\200\213" : "\342\201\240"); print }'
 fi
 
 # Fields (tab-separated): display, pane_id, session_name, row_number
@@ -718,7 +720,10 @@ for s in sessions_sorted:
         "\033[1;36m" + pad(f"▾ {sid_label}{s}", 22) + "\033[0m" + counts
         + "".join(team_summary(t) for t in sorted(teams_in_session.get(s, ())))
     )
-    print(f"{header}\t\t{s}")
+    # 行尾的零宽字符是这一行属于哪一级的暗号，给 picker 的滚轮用：fzf 的 --raw +
+    # down-match/up-match 只停在「匹配」的行上，skip-header.sh 用 search() 换成当前这一级
+    # 的暗号，滚轮就只在本级的行之间走、不起进程。U+2060 = session 表头，U+200B = pane 行。
+    print(f"{header}\u2060\t\t{s}")
 
     # Pane rows are indented deeper than headers on purpose: with the
     # left/right mode toggle either row type can hold the cursor, and the
@@ -850,7 +855,8 @@ for s in sessions_sorted:
         # changes for people without teams" guarantee dies on a character
         # nobody can see.
         suffix = "\tmate" if (is_mate and not team_only) else ""
-        print(f"{display}\t{pane}\t{s}\t{'' if is_mate else row_num}{suffix}")
+        tag = "" if (is_mate and not team_only) else "\u200b"  # 队员行不是光标停靠点，不带暗号
+        print(f"{display}{tag}\t{pane}\t{s}\t{'' if is_mate else row_num}{suffix}")
 
     if collapse:
         # Its own line, so the number is readable rather than implied by two
