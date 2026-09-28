@@ -108,7 +108,7 @@ TEAM_OPEN_HEADER='j/k 选队员 · h 收起 · Enter 跳到该队员 · / 搜索
 
 mode="pane"
 if [ -n "${MODE_FILE:-}" ] && [ -s "$MODE_FILE" ]; then
-  mode="$(cat "$MODE_FILE")"
+  mode=$(<"$MODE_FILE")          # $(cat) 会 fork；滚轮一秒几十次，省得起进程
 fi
 
 # Which lead's team is unfolded, as a row index (empty = none). `l` on a
@@ -155,8 +155,10 @@ _rows_loaded=0
 
 load_rows() {
   [ "$_rows_loaded" = 1 ] && return 0
+  local cache=""
   if [ -n "${ROWS_FILE:-}" ] && [ -s "$ROWS_FILE" ]; then
-    ROWS="$(cat "$ROWS_FILE")"
+    ROWS=$(<"$ROWS_FILE")          # $(cat) 会 fork，这个不会
+    cache="$ROWS_FILE.pos"
   else
     ROWS="$("$BIN_DIR/list-rows.sh")"
   fi
@@ -176,39 +178,50 @@ load_rows() {
     _rows_loaded=1
     return 0
   fi
-  TOTAL=$(printf '%s\n' "$ROWS" | wc -l | tr -d ' ')
-  # Four row kinds, and the cursor treats them differently: session headers
-  # (empty pane id, empty row number, no kind) stop only in session mode,
-  # pane rows (a %pane id) stop only in pane mode, the "⋯ 收起 N 个" summary
-  # (empty pane id, row number "-") stops in neither — it's a label, not a
-  # destination — and external provider items (field 5 == "extra") stop in
-  # pane mode alongside the panes, since Enter acts on them too. Hence
-  # separate position sets rather than one negated set.
-  HEADER_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($2 == "" && $4 == "" && $5 == "") print NR }' | paste -sd, -),"
-  # Teammate rows (field 5 == "mate") are excluded: they carry a pane id, so
-  # the bare `$2 != ""` test used to take them, and the cursor stopped on
-  # every teammate on its way past a team — walking you through rows that
-  # repeat what their lead's row already says, to reach a lead you'd wanted
-  # in one step. They stay visible, and a search hit can still act on one;
-  # they are simply not somewhere j/k stops. Under `f` list-rows.sh omits
-  # the marker, so in that mode they are ordinary pane rows again — which is
-  # the whole point of that mode.
-  PANE_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($2 != "" && $5 != "mate") print NR }' | paste -sd, -),"
-  EXTRA_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($5 == "extra") print NR }' | paste -sd, -),"
-  # Teammates as their own set: `l`/`h` walk into and out of a team, so the
-  # rows that are *not* cursor stops still have to be locatable.
-  MATE_POS=",$(printf '%s\n' "$ROWS" | awk -F'\t' '{ if ($5 == "mate") print NR }' | paste -sd, -),"
+  # 四种行，光标对它们的态度不一样：session 表头（pane 空、行号空、kind 空）只在 session
+  # 模式停，pane 行（有 %pane id）只在 pane 模式停，「⋯ 收起 N 个」那行（行号是 "-"）两边
+  # 都不停 —— 它是标签不是去处 ——，外部条目（第 5 列 extra）在 pane 模式里跟 pane 一起停，
+  # 因为回车对它也有动作。所以是四个独立的位置集合，不是一个取反。
+  #
+  # 队员行（第 5 列 mate）不算 pane 行：它们也带 pane id，早先那个 `$2 != ""` 会把它们收
+  # 进来，光标路过一支编队时每个队员都要停一下 —— 让你一行行走过重复了队长那行的内容，
+  # 才走到本来一步就能到的队长。它们照常显示、搜到了也照常能操作，只是不做光标停靠点。
+  # `f` 模式下 list-rows.sh 不打这个标记，那时它们就是普通 pane 行 —— 那正是那个模式的意义。
+  #
+  # ⚠️ 这四个集合以前是四条 `awk | paste` 流水线，每次调用现算：单次 26ms。j/k 一次一下
+  # 无所谓，可滚轮一秒几十格，每格 fork 一个 bash 再跑八个子进程，当场堆成卡顿
+  # （2026-09-28 用户报「滚 picker 特别卡」）。改成一趟 awk 算完、结果按 shell 赋值写进
+  # $ROWS_FILE.pos；行表没变就直接 source 那个文件，一个子进程都不起。
+  if [ -n "$cache" ] && [ -s "$cache" ] && [ ! "$ROWS_FILE" -nt "$cache" ]; then
+    . "$cache"
+  else
+    local sets
+    sets=$(printf '%s\n' "$ROWS" | awk -F'\t' '
+      { n = NR
+        if ($2 == "" && $4 == "" && $5 == "") h = h n ","
+        if ($2 != "" && $5 != "mate")         p = p n ","
+        if ($5 == "extra")                    e = e n ","
+        if ($5 == "mate")                     m = m n "," }
+      END { printf "TOTAL=%d\nHEADER_POS=\",%s\"\nPANE_POS=\",%s\"\nEXTRA_POS=\",%s\"\nMATE_POS=\",%s\"\n",
+                   NR, h, p, e, m }')
+    [ -n "$cache" ] && printf '%s\n' "$sets" > "$cache" 2>/dev/null
+    eval "$sets"
+  fi
   _rows_loaded=1
 }
 
 # The row cache changed underneath us; the next question re-reads it.
-invalidate_rows() { _rows_loaded=0; }
+invalidate_rows() { _rows_loaded=0; [ -n "${ROWS_FILE:-}" ] && rm -f "$ROWS_FILE.pos"; return 0; }
 
 # ",1,3," -> 2 ; ",," -> 0. An empty set is a normal state, not a mistake.
 count_pos() {
   local s="${1#,}"
   s="${s%,}"
-  if [ -z "$s" ]; then printf '0'; else printf '%s' "$s" | awk -F, '{ print NF }'; fi
+  # 纯 bash 数逗号：这个函数在导航路径上被反复调用，起 awk 不值当。
+  if [ -z "$s" ]; then printf '0'; else
+    local n=1 t="${s//[^,]/}"
+    printf '%d' $(( ${#t} + 1 ))
+  fi
 }
 
 # **The judgement everything about emptiness is derived from.** Not "are
@@ -912,8 +925,18 @@ fi
 # one set of dead keys for a different set, and `right` sending $PANE_HEADER
 # literally went out folded while a team was still open.
 #
-# It goes out with every cursor move, not just the switches — usually the same
-# string already showing, so it costs a redraw of one line, and it is how both
+# It goes out with every cursor move, not just the switches — that is how both
 # the `f` notice and a stale empty-state header clear themselves without a
 # second piece of per-instance state to remember them by.
-echo "change-header($(chips "$(mode_header "$idx")"))+pos($idx)"
+#
+# ⚠️ 但「没变也发」现在不行了：滚轮一格就走一次这里，`$(chips …)` 和 `$(mode_header …)`
+# 各是一次子 shell fork，加上 fzf 重画一整行带样式的表头 —— 机器一忙就积压成肉眼可见的
+# 卡顿（2026-09-28 用户报「滚 picker 特别卡」，当时 load 8.7）。所以记住上一次的原文，
+# 一样就只发 pos()。表头没变时 $HEADER_FILE（给 mouse.sh 查列用的）本来也不需要重写。
+_hdr=$(mode_header "$idx")
+if [ -n "${HEADER_RAW_FILE:-}" ] && [ -f "$HEADER_RAW_FILE" ] && [ "$_hdr" = "$(<"$HEADER_RAW_FILE")" ]; then
+  echo "pos($idx)"
+else
+  [ -n "${HEADER_RAW_FILE:-}" ] && printf '%s' "$_hdr" > "$HEADER_RAW_FILE"
+  echo "change-header($(chips "$_hdr"))+pos($idx)"
+fi

@@ -132,7 +132,7 @@ export PENDING_FILE
 JUMP_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-jump.XXXXXX")"
 export JUMP_FILE
 
-trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$PENDING_FILE" "$SHOW_ALL_FILE" "$HEADER_FILE" "$JUMP_FILE" "${TEAM_FILE:-}" "${EXPAND_FILE:-}" "${INIT_FILE:-}"' EXIT
+trap 'rm -f "$MODE_FILE" "$ROWS_FILE" "$ROWS_FILE.pos" "$PENDING_FILE" "$SHOW_ALL_FILE" "$HEADER_FILE" "$JUMP_FILE" "${TEAM_FILE:-}" "${EXPAND_FILE:-}" "${INIT_FILE:-}" "${HEADER_RAW_FILE:-}"' EXIT
 
 # Starts with search disabled AND the input line hidden (--disabled
 # --no-input): j/k/h/l navigate vim-style, and unbound letters go nowhere
@@ -253,6 +253,9 @@ done
 # $INIT_FILE as the marker.
 INIT_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-init.XXXXXX")"
 export INIT_FILE
+# 表头原文，用来判断「这次要不要真的发 change-header」——见 skip-header.sh 结尾。
+HEADER_RAW_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-hdrraw.XXXXXX")"
+export HEADER_RAW_FILE
 if [ -n "${CALLER_PANE:-}" ]; then
   # Not onto a teammate row: those are not cursor stops, so starting there
   # would park the cursor somewhere j/k cannot return to. Opening the
