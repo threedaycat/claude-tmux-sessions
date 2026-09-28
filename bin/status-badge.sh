@@ -345,10 +345,14 @@ if blocked:
 # one thing here that still changes the segment's width.
 # ︎ forces the narrow text glyph. Each is a clickable range: a click opens
 # the picker listing just those panes.
+# quota 模式（状态栏最右边那一半）不出这三个：常驻之后零也会画出来，
+# 右边就多了一组全是 0 的 ✔ ▶ ✓。
 ZERO = "#6c6c6c"
 for rng, icon, count, colour in (("done", "✔︎", done_unread, "#5fff00"),
                                  ("running", "▶︎", running, "#ffff00"),
                                  ("read", "✓︎", read_count, "#5f87d7")):
+    if MODE == "quota":
+        break
     parts.append(f"#[range=user|{rng}]#[fg={colour if count else ZERO}]"
                  f"{icon} {count}#[norange]")
 
