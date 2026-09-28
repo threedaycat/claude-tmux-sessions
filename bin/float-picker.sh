@@ -87,7 +87,7 @@ y=$(( win_h - h - 1 ))                  # leave the bottom border its row
 
 envs=()
 for v in CLAUDE_TMUX_USAGE_FOOTER CLAUDE_TMUX_PREVIEW_WIDTH CLAUDE_TMUX_SHOW_ALL \
-         CLAUDE_TMUX_ONLY CLAUDE_TMUX_PREVIEW_SIDE; do
+         CLAUDE_TMUX_ONLY CLAUDE_TMUX_PREVIEW_SIDE CLAUDE_TMUX_MODE; do
   [ -n "${!v:-}" ] && envs+=(-e "$v=${!v}")
 done
 

@@ -535,7 +535,8 @@ if [ "$dir" = "init" ]; then
   # Opened via the tmux binding that passes CALLER_PANE, and that pane is
   # tracked: start on "where I am" rather than on whatever is first.
   if [ -n "${CALLER_POS:-}" ]; then
-    [ -n "${MODE_FILE:-}" ] && printf 'pane' > "$MODE_FILE"
+    # 落在哪一行就用哪一级：picker 算 CALLER_POS 时一并定好的（见 claude-tmux-picker.sh）。
+    [ -n "${MODE_FILE:-}" ] && printf '%s' "${CALLER_MODE:-pane}" > "$MODE_FILE"
     echo "pos($CALLER_POS)"
     exit 0
   fi

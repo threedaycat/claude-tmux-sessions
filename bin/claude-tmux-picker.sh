@@ -97,13 +97,14 @@ fi
 # so can't keep it in a variable. Scoped to this picker instance.
 MODE_FILE="$(mktemp "${TMPDIR:-/tmp}/claude-tmux-picker-mode.XXXXXX")"
 export MODE_FILE
-# Session mode on open. Tried pane mode once on the theory that starting a
-# level above the Claudes taxes the switch — but the tax was never the mode,
-# it was the four hundred external rows sitting above the panes, and that is
-# fixed where it belongs (see list-rows.sh's provider block). At the session
-# level the list opens as five lines you can take in at a glance; `l` drops
-# into the panes of the one you're on, `h` comes back out.
-printf 'session' > "$MODE_FILE"
+# 开在哪一级由**谁把它点开的**决定（CLAUDE_TMUX_MODE，默认 pane）：
+#   session  状态栏左边那个 session 名点开的 —— 列表就是几行 session，一眼看得完，
+#            `l` 进到某个 session 的 pane 里，`h` 退回来。
+#   pane     `✔ / ▶ / ⏸` 这些 Claude 状态块、以及 `bind g` 的整屏 picker 点开的 ——
+#            你要找的是某个 Claude，直接落在 pane 这一级。
+# 以前一律开在 session 级，然后 init 又偷偷改回 pane 级、却把光标停在 session 表头行上，
+# 于是滚轮一滚就滚到 session 那一级去了（2026-09-28 用户报的）。
+printf '%s' "${CLAUDE_TMUX_MODE:-pane}" > "$MODE_FILE"
 
 # Row cache shared with skip-header.sh: its transform runs on EVERY
 # arrow keypress, and re-running list-rows.sh there (prune + two
@@ -177,6 +178,10 @@ fzf_args=(--ansi --delimiter=$'\t' --with-nth=1 --disabled --no-input
   --preview "$BIN_DIR/preview-row.sh {2} {3} {5} {6}"
   --preview-window="$PREVIEW_WINDOW"
   --preview-label=' Claude 实时画面 '
+  # 滚轮走和 j/k 完全一样的路：fzf 自带的 scroll 只是把光标挪一行，会停到另一级的行上
+  # （pane 级滚着滚着就选中了 session 表头）。交给 skip-header.sh 就自动跳过不该停的行。
+  --bind "scroll-down:transform:$BIN_DIR/skip-header.sh \"{n}\" down"
+  --bind "scroll-up:transform:$BIN_DIR/skip-header.sh \"{n}\" up"
   --bind "down:transform:$BIN_DIR/skip-header.sh \"{n}\" down"
   --bind "up:transform:$BIN_DIR/skip-header.sh \"{n}\" up"
   --bind "left:transform:$BIN_DIR/skip-header.sh \"{n}\" left"
@@ -258,14 +263,23 @@ if [ -n "${CALLER_PANE:-}" ]; then
   # editor), and you still want to open where you are. Header rows are the
   # ones with an empty pane field; field 3 is the session they belong to.
   CALLER_SESSION=$(tmux display-message -p -t "$CALLER_PANE" '#{session_name}' 2>/dev/null || true)
-  CALLER_POS=$(printf '%s\n' "$rows" \
+  # 表头行的 pane 字段是空的，第 3 列是它属于的 session。
+  HEADER_POS=$(printf '%s\n' "$rows" \
     | awk -F'\t' -v s="$CALLER_SESSION" '$2=="" && $3==s { print NR; exit }')
-  # No header for it — fall back to the caller's own pane row. Not onto a
-  # teammate row: those are not cursor stops, so starting there would park
-  # the cursor somewhere j/k cannot return to.
-  [ -n "$CALLER_POS" ] || CALLER_POS=$(printf '%s\n' "$rows" \
+  # 调用者自己那行。不落在队员行上：那些不是光标停靠点，停上去 j/k 回不来。
+  PANE_POS=$(printf '%s\n' "$rows" \
     | awk -F'\t' -v p="$CALLER_PANE" '$2==p && $5!="mate" { print NR; exit }')
-  export CALLER_POS
+  # 光标停在哪、就得是哪一级 —— 停在 session 表头行却按 pane 级导航，滚一下就串级了。
+  # pane 模式而这个 pane 没被跟踪（是个 shell、编辑器），只好退回它所在 session 的表头，
+  # 那就老老实实用 session 级。
+  if [ "${CLAUDE_TMUX_MODE:-pane}" = session ]; then
+    CALLER_POS="${HEADER_POS:-$PANE_POS}"
+    [ -n "$HEADER_POS" ] && CALLER_MODE=session || CALLER_MODE=pane
+  else
+    CALLER_POS="${PANE_POS:-$HEADER_POS}"
+    [ -n "$PANE_POS" ] && CALLER_MODE=pane || CALLER_MODE=session
+  fi
+  export CALLER_POS CALLER_MODE
 fi
 fzf_args+=(--bind "load:transform:$BIN_DIR/skip-header.sh 0 init")
 
