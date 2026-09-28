@@ -332,21 +332,25 @@ if blocked:
     parts.append(
         f"#[range=user|w{pane}]#[fg=#ff5f5f,bold]⏸︎ {label}#[default]#[norange]"
     )
-# Only the two states worth acting on show here — already-read and
-# aged-out panes stay out of the ambient bar so it never nags with noise.
+# The three counts, always all three, in the same order, whether or not any
+# of them is zero — 一个数归零就整块消失的话，另外两个会横着挪位置，你按着
+# 记忆去点就点错了（2026-09-28 用户原话：「尽量固定显示，就算是 0 也显示一下，
+# 反正就三个状态」）。零的那个用灰色，占着位置但不喊人。
 # Icons and colours match the picker's labels: ✔ DONE-unread (green, a
 # result to look at) leads, then ▶ RUN (yellow, Claude's still busy —
-# nothing for you to do). The blocked WAIT chip above outranks both and
-# leads the whole segment. ︎ forces the narrow text glyph. Each is a
-# clickable range: a click opens the picker listing just those panes.
-if done_unread:
-    parts.append(f"#[range=user|done]#[fg=#5fff00]✔︎ {done_unread}#[norange]")
-if running:
-    parts.append(f"#[range=user|running]#[fg=#ffff00]▶︎ {running}#[norange]")
-# ✓ READ last and in the picker's own READ blue: finished and already looked
-# at, so nothing is waiting — but it's where you go to hand out the next job.
-if read_count:
-    parts.append(f"#[range=user|read]#[fg=#5f87d7]✓︎ {read_count}#[norange]")
+# nothing for you to do), then ✓ READ in the picker's own READ blue —
+# finished and already looked at, so nothing is waiting, but it's where you
+# go to hand out the next job. The blocked WAIT chip above outranks all
+# three and leads the whole segment; it carries a window name, so it is the
+# one thing here that still changes the segment's width.
+# ︎ forces the narrow text glyph. Each is a clickable range: a click opens
+# the picker listing just those panes.
+ZERO = "#6c6c6c"
+for rng, icon, count, colour in (("done", "✔︎", done_unread, "#5fff00"),
+                                 ("running", "▶︎", running, "#ffff00"),
+                                 ("read", "✓︎", read_count, "#5f87d7")):
+    parts.append(f"#[range=user|{rng}]#[fg={colour if count else ZERO}]"
+                 f"{icon} {count}#[norange]")
 
 if parts:
     # A trailing plain space in quota mode too, although that half sits at
