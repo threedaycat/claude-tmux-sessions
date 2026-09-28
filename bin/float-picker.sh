@@ -29,6 +29,22 @@
 set -uo pipefail
 BIN_DIR="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 
+SELF="$BIN_DIR/$(basename "$0")"
+
+# 浮窗的 pane-focus-out 钩子走到这里：这次失焦到底是不是「点了浮窗外面」。
+# tmux 开着 focus-events，整个终端窗口失焦（切去 Chrome、切去别的 App）也会给活动窗格
+# 发一次 pane-focus-out，跟点浮窗外面长得一模一样，以前会把 picker 一起关掉。
+# 等 0.4 秒再看（picker 自己跳走时要好几次 tmux 调用，得让它走完）：浮窗仍是当前窗口的
+# 活动窗格，就是终端自己失焦，留着。
+if [ "${1:-}" = --maybe-close ]; then
+  fp="$2"
+  sleep 0.4
+  still=$(tmux display -p -t "$fp" '#{&&:#{pane_active},#{window_active}}' 2>/dev/null) || exit 0
+  [ "$still" = 1 ] && exit 0
+  tmux kill-pane -t "$fp" 2>/dev/null || true
+  exit 0
+fi
+
 caller="$1"; kind="${2:-all}"; width="${3:-}"
 # While a float is open it *is* the active pane, so a click on the status
 # bar reports the float itself as the caller. Swap in the pane the float was
@@ -82,4 +98,4 @@ fp=$(tmux new-pane -t "$caller" -P -F '#{pane_id}' -x "$width" -y "$h" -X 0 -Y "
 tmux set -p -t "$fp" @picker_float "$kind"
 tmux set -p -t "$fp" @picker_caller "$caller"
 tmux set-hook -p -t "$fp" pane-focus-out \
-  "run-shell -b 'sleep 0.4; tmux kill-pane -t $fp 2>/dev/null || true'"
+  "run-shell -b '\"$SELF\" --maybe-close $fp'"
