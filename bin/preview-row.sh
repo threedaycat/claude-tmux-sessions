@@ -14,6 +14,14 @@
 # "External item provider") — this script doesn't know what the row means.
 set -euo pipefail
 
+# 先歇一下再干活。fzf 每换一次选中项就重跑这个脚本，并把上一个杀掉——而这个脚本一趟
+# 要 111ms（bash 启动 + tmux 截屏 + 两个 python：strip-chrome 和 session-digest），
+# 滚轮一秒几十格就是几十次「起进程 → 干 100ms → 被杀」，机器一忙就堆成肉眼可见的卡顿
+# （2026-09-28 用户报「滚轮延迟非常高」）。睡在最前面，滚动途中的那些还没碰任何东西就
+# 被杀掉了；停下来超过这点时间，预览才真的去截屏。
+# 实测（fzf 里快速滚 20 格）：不睡跑完 21 次，睡 0.15 跑完 6 次。
+sleep "${CLAUDE_TMUX_PREVIEW_DELAY:-0.15}"
+
 pane="${1:-}"
 session="${2:-}"
 kind="${3:-}"
