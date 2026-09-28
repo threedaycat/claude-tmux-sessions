@@ -276,15 +276,23 @@ if [ -n "${CALLER_PANE:-}" ]; then
   # 调用者自己那行。不落在队员行上：那些不是光标停靠点，停上去 j/k 回不来。
   PANE_POS=$(printf '%s\n' "$rows" \
     | awk -F'\t' -v p="$CALLER_PANE" '$2==p && $5!="mate" { print NR; exit }')
+  # 兜底用的第一行：第一个 pane 行 / 第一个 session 表头。
+  FIRST_PANE=$(printf '%s\n' "$rows" | awk -F'\t' '$2!="" && $5!="mate" { print NR; exit }')
+  FIRST_HEADER=$(printf '%s\n' "$rows" | awk -F'\t' '$2=="" && $4=="" && $5=="" { print NR; exit }')
   # 光标停在哪、就得是哪一级 —— 停在 session 表头行却按 pane 级导航，滚一下就串级了。
-  # pane 模式而这个 pane 没被跟踪（是个 shell、编辑器），只好退回它所在 session 的表头，
-  # 那就老老实实用 session 级。
+  #
+  # ⚠️ 兜底不能跨级。`✔ 已完成` 这类入口会把列表过滤成只剩那一类窗格
+  # （CLAUDE_TMUX_ONLY），你当前这个 Claude 多半不在里面，于是 PANE_POS 是空的；
+  # 早先这时候退回「它所在 session 的表头」，整个 picker 就掉到 session 级去了
+  # —— 点 ✔ 是想在几个已完成的 Claude 之间挑，不是想挑 session。
+  # 所以 pane 级找不到自己那行就退到第一个 pane 行，仍然留在 pane 级；
+  # 只有列表里一个 pane 行都没有才改用 session 级。反过来同理。
   if [ "${CLAUDE_TMUX_MODE:-pane}" = session ]; then
-    CALLER_POS="${HEADER_POS:-$PANE_POS}"
-    [ -n "$HEADER_POS" ] && CALLER_MODE=session || CALLER_MODE=pane
+    CALLER_POS="${HEADER_POS:-${FIRST_HEADER:-$FIRST_PANE}}"
+    if [ -n "${HEADER_POS:-$FIRST_HEADER}" ]; then CALLER_MODE=session; else CALLER_MODE=pane; fi
   else
-    CALLER_POS="${PANE_POS:-$HEADER_POS}"
-    [ -n "$PANE_POS" ] && CALLER_MODE=pane || CALLER_MODE=session
+    CALLER_POS="${PANE_POS:-${FIRST_PANE:-$FIRST_HEADER}}"
+    if [ -n "${PANE_POS:-$FIRST_PANE}" ]; then CALLER_MODE=pane; else CALLER_MODE=session; fi
   fi
   export CALLER_POS CALLER_MODE
 fi

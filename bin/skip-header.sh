@@ -549,8 +549,11 @@ if [ "$dir" = "init" ]; then
   # tracked: start on "where I am" rather than on whatever is first.
   if [ -n "${CALLER_POS:-}" ]; then
     # 落在哪一行就用哪一级：picker 算 CALLER_POS 时一并定好的（见 claude-tmux-picker.sh）。
-    [ -n "${MODE_FILE:-}" ] && printf '%s' "${CALLER_MODE:-pane}" > "$MODE_FILE"
-    echo "pos($CALLER_POS)"
+    mode="${CALLER_MODE:-pane}"
+    [ -n "${MODE_FILE:-}" ] && printf '%s' "$mode" > "$MODE_FILE"
+    # 表头也得跟着换。fzf 的 --header 是按 pane 级的文字起的，开在 session 级时不改它，
+    # 提示就还写着「j/k 选窗口 · h session」，和实际按键行为对不上。
+    echo "change-header($(chips "$(mode_header "$CALLER_POS")"))+pos($CALLER_POS)"
     exit 0
   fi
 fi
