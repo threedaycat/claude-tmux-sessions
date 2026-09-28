@@ -198,16 +198,25 @@ def show_card(usage, err, live, note=None, refreshing=False):
 
 
 def replace_card(first, *args, **kw):
-    """Swap the refreshing card for the answer — only if it is still open.
-    Closed already (a click elsewhere, a key) means you've moved on; popping
-    it back up would be a card nobody asked for. tmux won't open a menu over
-    another one, so close ours first (display-popup -C closes any overlay;
-    ours is the one up, since its display-menu is still waiting)."""
-    if first is None or first.poll() is not None:
-        return
-    close = ["tmux", "display-popup", "-C"] + (["-c", CLIENT] if CLIENT else [])
-    subprocess.run(close, capture_output=True)
-    first.wait()
+    """Swap the refreshing card for the answer.
+
+    It used to bail out when the first card was already gone, reading that as
+    "you clicked elsewhere, you've moved on". That read was wrong: the overlay
+    gets torn down on its own within a second or two whenever anything else is
+    happening in the client (idle, it stays up for at least 8s; measured
+    2026-09-28 at 0.07s / 0.9s / 1.25s / 2.02s / 2.7s across runs — the trigger
+    was not isolated). The fetch takes ~2s, so by the time the answer was ready
+    the first card was usually gone and the rule threw the numbers away. That is
+    the whole "额度浮窗经常不出现 / 出现一下就没了，看不到内容" bug: the card you
+    actually wanted — the one with the numbers — was the one that never showed.
+
+    So: still open → close it and put the answer in its place (tmux won't open a
+    menu over another one). Already gone → show the answer anyway. A card two
+    seconds after a click is what the click asked for."""
+    if first is not None and first.poll() is None:
+        close = ["tmux", "display-popup", "-C"] + (["-c", CLIENT] if CLIENT else [])
+        subprocess.run(close, capture_output=True)
+        first.wait()
     show_card(*args, **kw).wait()
 
 
