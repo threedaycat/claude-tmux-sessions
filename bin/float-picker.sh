@@ -99,3 +99,15 @@ tmux set -p -t "$fp" @picker_float "$kind"
 tmux set -p -t "$fp" @picker_caller "$caller"
 tmux set-hook -p -t "$fp" pane-focus-out \
   "run-shell -b '\"$SELF\" --maybe-close $fp'"
+# Claude Code 建 teammates 的时候会把这个浮窗吸进平铺布局，变成右边一个普通窗格
+# （2026-09-29 用户报，已复现）。根因在它那边：`TmuxBackend.createTeammatePaneWithLeader`
+# 用 `tmux list-panes` 数窗格，而 list-panes 会把浮动窗格一起列出来；随后
+# `rebalancePanesWithLeader` 的 `select-layout main-vertical` 就把浮窗当成平铺树里的一格
+# 摆走了（实测 pane_floating_flag 从 1 变成 0）。
+# 我们这边拦不住那次 select-layout，但可以让浮窗在被摆走的那一刻自己关掉 —— 结果是
+# picker 干脆消失，而不是留下一个乱七八糟的窗格。
+# 判据是「这一格不再是浮的」，不是「布局变了」：浮窗自己被 new-pane 建出来时也会触发
+# 这个钩子，用布局变没变做判据它会当场自杀。
+# 挂成窗格级钩子（-p），所以 if -F 判的就是这一格自己，全程 tmux 内部完成，不起进程。
+tmux set-hook -p -t "$fp" window-layout-changed \
+  "if -F '#{!:#{pane_floating_flag}}' { kill-pane -t $fp }"
