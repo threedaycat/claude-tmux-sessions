@@ -157,19 +157,10 @@ def quota_bar(pct, colour, empty="#585858"):
     )
 
 
-def quota_colour(pct):
-    """The bar deepens as the 5h window fills — green (plenty left) →
-    chartreuse → gold → orange → red (nearly spent) — so how close you are
-    to the cap reads straight off the colour, no number needed."""
-    if pct >= 90:
-        return "#ff0000"   # nearly/at the cap — loud red
-    if pct >= 75:
-        return "#ff8700"   # orange
-    if pct >= 55:
-        return "#ffd700"   # gold
-    if pct >= 35:
-        return "#afd700"   # chartreuse
-    return "#5fff00"       # green — lots of headroom
+# 用量柱固定黄色，时间柱固定蓝色：一黄一蓝只比高度。以前用量柱按用量从绿变到红，
+# 颜色和高度说的是同一件事，还让「哪根是用量」每次都得重新认 —— 用户要的是
+# 「一根黄色的，一根蓝色的……来代表我到底是用得快了还是用得慢了」（2026-10-01）。
+USED = "#ffd700"
 
 
 def reset_suffix(resets_at):
@@ -268,7 +259,7 @@ def time_left_glyph(label, dt):
 
 def window_segment(label, w, with_reset=False):
     """`5h▂▄`: a dim label, a block for how much is used (grows up, ▁ → █,
-    coloured green → red), then a blue block for how much of the window has
+    in yellow), then a blue block for how much of the window has
     elapsed — same direction and same scale, so comparing the two heights
     tells you whether you're burning faster than the window refills (see
     time_left_glyph). No numbers in the bar — a click opens a card with them
@@ -282,7 +273,7 @@ def window_segment(label, w, with_reset=False):
     if dt is not None and dt <= datetime.now().astimezone():
         # The window this reading belongs to has already rolled over.
         return f"#[fg=#585858]{label}{g}#[default]"
-    return (f"#[fg=#6c6c6c]{label}#[fg={quota_colour(pct)}]{g}"
+    return (f"#[fg=#6c6c6c]{label}#[fg={USED}]{g}"
             f"{time_left_glyph(label, dt)}#[default]")
 
 

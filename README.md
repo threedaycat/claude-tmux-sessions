@@ -349,8 +349,7 @@ Clickable words in the picker's header are drawn as grey chips; toggling
 floating pane downward).
 
 Each window is two cells, drawn the same way so their heights can be
-compared. The first is usage: it grows up from the bottom (▁ → █, green →
-red). The second is how much of the window has elapsed, in blue, growing up
+compared. The first is usage, in yellow: it grows up from the bottom (▁ → █). The second is how much of the window has elapsed, in blue, growing up
 from the bottom too — ▁ just after it opened, █ about to reset. Usage taller
 than time means you're burning faster than the window refills. `status-badge.sh states` / `status-badge.sh quota`
 print the two halves separately, so the Claude states can sit next to the
