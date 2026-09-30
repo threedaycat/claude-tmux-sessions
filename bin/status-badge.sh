@@ -90,11 +90,33 @@ def clip(s, width=22):
 # picker. Overridable via env for a tighter/looser window.
 IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 
+# 队员的窗格不进这几个计数。状态栏只说主 Claude —— team leader 和没有编队的普通 Claude
+# （用户 2026-09-29：「我们只展示那些 team leader 的，不要展示 teammates 的」）。
+# 队员是 lead 派出去的手，它们跑完、在跑、被看过，都不是「有件事在等你」；
+# 而且一个队一开就是四五个，计数会被它们整个淹掉。队员的状态在 picker 里 lead 那一行上
+# 单独有一格（list-rows.sh 的 mate_cell）。
+#
+# 门槛和 list-rows.sh 那边一样：没开过 Agent Teams 的人连 import 都不会发生，
+# 这个文件对他们一个字节的开销都不加。读不出来就当没有队员，计数退回原样 ——
+# 编队读坏了不该让状态栏变空。
+mate_panes = set()
+_claude_home = os.environ.get("CLAUDE_HOME") or os.path.expanduser("~/.claude")
+if os.environ.get("BIN_DIR") and os.path.isdir(os.path.join(_claude_home, "teams")):
+    try:
+        sys.path.insert(0, os.environ["BIN_DIR"])
+        import agent_teams
+        _snap = agent_teams.snapshot()
+        if _snap:
+            mate_panes = {m["pane"] for m in _snap["by_pane"].values()
+                          if m.get("is_mate") and m.get("pane")}
+    except Exception:
+        mate_panes = set()
+
 now = time.time()
 blocked = []            # (elapsed_secs, window_name, pane_id) for blocked-and-unread
 done_unread = running = read_count = 0
 for pane, e in data.items():
-    if pane not in live or e.get("archived"):
+    if pane not in live or e.get("archived") or pane in mate_panes:
         continue
     status = e.get("status", "running")
     age = int(now - e.get("updated_at", now))

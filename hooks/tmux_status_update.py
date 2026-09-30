@@ -785,12 +785,31 @@ def sync_window_badges():
 
     mark_watched_read(data)
 
+    # 队员不进窗口徽标。队员就住在它 lead 的那个窗口里，不排除的话那一格画的多半是队员的
+    # 状态，而不是这个窗口里那个主 Claude 的（用户 2026-09-29：「只展示 team leader 的
+    # 或者是原本的 Claude 的状态」）。状态栏左下角那三/四块计数同理，见 status-badge.sh。
+    # 和别处一样的门槛：没开过 Agent Teams 的人不会 import，也不会多读一个文件；
+    # 读坏了就当没有队员，徽标退回原来的算法。
+    mate_panes = set()
+    _teams_home = os.environ.get("CLAUDE_HOME") or os.path.expanduser("~/.claude")
+    if os.path.isdir(os.path.join(_teams_home, "teams")):
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "..", "bin"))
+            import agent_teams
+            _snap = agent_teams.snapshot()
+            if _snap:
+                mate_panes = {m["pane"] for m in _snap["by_pane"].values()
+                              if m.get("is_mate") and m.get("pane")}
+        except Exception:
+            mate_panes = set()
+
     now = time.time()
     counts = {}
     run_panes = {}
     for pane, entry in data.items():
         win = win_of.get(pane)
-        if win is None or entry.get("archived"):
+        if win is None or entry.get("archived") or pane in mate_panes:
             continue
         state = badge_state(entry, now)
         counts.setdefault(win, {})

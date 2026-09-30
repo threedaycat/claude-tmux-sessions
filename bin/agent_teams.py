@@ -387,11 +387,11 @@ def snapshot():
     return {"teams": out, "by_pane": by_pane}
 
 
-def attach_lead(snap, pane_session):
+def attach_lead(snap, pane_window):
     """Keep a team's lead pane in `by_pane`, without ever claiming to know
     which pane it is.
 
-    `pane_session` is `{pane_id: tmux session name}` for the Claude panes the
+    `pane_window` is `{pane_id: "session:window"}` for the Claude panes the
     caller is actually showing — its world, injected, so this module keeps
     knowing nothing about tmux or the status file. Call it after `snapshot()`;
     it edits `snap` in place and returns it.
@@ -407,8 +407,16 @@ def attach_lead(snap, pane_session):
     view. What has to be fixed is that the row survives. **Naming the row is
     a separate, optional claim, and this function does not make it.**
 
-    **Nothing here ever sets `is_lead`.** An earlier version did, whenever
-    exactly one pane in the team's session was unaccounted for, and that
+    **窗口才是锚，session 不是。** 2026-09-29 之前这里按 tmux *session* 找候选，
+    然后因为候选太多而永不加冕 —— 本机一个真实的队，5 个队员全在 `zymix:1`，而按
+    session 算出 4 个候选（zymix:1..4 各一个 Claude），于是 lead 认不出来。
+    按*窗口*算只剩 1 个，而且那 1 个不是猜出来的：Claude Code 建队员窗格的代码
+    (`TmuxBackend.createTeammatePaneWithLeader`) 取的就是 `getCurrentWindowTarget()`，
+    队员是从 lead 自己那个窗口 split 出来的，所以 lead 必然和队员同窗口。
+    候选正好一个时加冕，其余情况一个都不加冕 —— 下面这段讲的就是为什么不能乱加冕。
+
+    An earlier version set `is_lead` whenever
+    exactly one pane in the team's *session* was unaccounted for, and that
     reading was wrong: "one" means "there is one pane here I cannot explain",
     which is not evidence that it is the lead. A lead running in another
     session, or outside tmux entirely, leaves exactly one unrelated pane
@@ -454,7 +462,7 @@ def attach_lead(snap, pane_session):
     contributes no rows at all, which is a boundary of the design rather than
     a gap in it.
     """
-    if not snap or not pane_session:
+    if not snap or not pane_window:
         return snap
     by_pane = snap["by_pane"]
     for t in snap["teams"]:
@@ -476,12 +484,30 @@ def attach_lead(snap, pane_session):
         # no teammates there is no anchor and nothing below can run — which
         # is exactly why a team whose only member is the lead stays invisible.
         mate_panes = {m["pane"] for m in t["members"] if m["pane"] and m["is_mate"]}
-        sessions = {pane_session[p] for p in mate_panes if p in pane_session}
-        if not sessions:
+        windows = {pane_window[p] for p in mate_panes if p in pane_window}
+        if not windows:
             continue
-        for p in sorted(pane_session):
-            if pane_session[p] not in sessions or p in by_pane:
-                continue
+        cands = [p for p in sorted(pane_window)
+                 if pane_window[p] in windows and p not in by_pane]
+        # 恰好一个候选 → 它就是 lead，这不是猜（见上面「窗口才是锚」那段）。
+        # 不是一个就一个都不加冕，和以前一样：0 个多半是队员开在自己那个窗口里
+        # （createTeammatePaneExternal 那条路），2 个以上说明同一个窗口里还有别的
+        # Claude，分不出来就不分。
+        if len(cands) == 1:
+            p = cands[0]
+            lead["inferred_pane"] = p
+            by_pane[p] = {
+                "name": lead.get("name", ""), "type": lead.get("type", ""),
+                "is_lead": True, "is_mate": False,
+                "pane": p, "cwd": lead.get("cwd", ""),
+                "colour": lead.get("colour", ""), "sgr": lead.get("sgr", ""),
+                "team": t["team"], "inbox": lead.get("inbox", 0),
+                "label": lead.get("label", ""),
+                "doing": lead.get("doing", ""), "doing_id": lead.get("doing_id", ""),
+                "doing_waiting": lead.get("doing_waiting", []),
+            }
+            continue
+        for p in cands:
             # A pane in the team's session that is not a teammate. The lead
             # is one of these; which one is not knowable, and the count does
             # not make it knowable — a single unexplained pane is a single

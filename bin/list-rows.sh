@@ -426,8 +426,10 @@ now = time.time()
 # same way, because a pane this list would not show must not be nominated
 # as anybody's lead either.
 if teams_snap:
+    # 传的是「session:窗口」而不是 session：队员是从 lead 自己那个窗口 split 出来的，
+    # 按窗口找候选才只剩一个，lead 才认得出来（见 agent_teams.attach_lead）。
     agent_teams.attach_lead(teams_snap, {
-        p: live[p][1] for p, e in data.items()
+        p: f"{live[p][1]}:{live[p][2]}" for p, e in data.items()
         if p in live and not e.get("archived")
     })
     members_by_pane = teams_snap["by_pane"]
@@ -482,6 +484,51 @@ for pane, e in data.items():
     by_session[session].append((seq, rank, pane, label, age, wname, cwd, member))
 
 sessions_sorted = sorted(by_session.keys(), key=lambda s: session_order.get(s, 1 << 30))
+
+# 队员不再各占一行，改成挂在它们 lead 那一行上的一格 —— 每个队的队员数，加上他们分别
+# 处在哪个状态（2026-09-29 用户：「我没有必要关注这些 teammates 的状态，我只需要关注
+# 他的 team leader，也就是主 Claude 的状态就够了」）。
+# 一个队最多几个人，但在列表里就是几整行，而且它们的名字、年龄、cwd 全是重复的 ——
+# 花掉的是纵向空间，换回来的信息只有「有几个人、各是什么状态」这一句。所以就只留这一句。
+mate_ranks = defaultdict(list)
+for _s, _entries in by_session.items():
+    for _seq, _rank, _pane, _label, _age, _wname, _cwd, _member in _entries:
+        if _member and _member.get("is_mate"):
+            mate_ranks[_member["team"]].append(_rank)
+
+# 和会话表头上那排计数同一套图标和颜色 —— 你在表头扫的是什么形状，在这里扫的就是什么形状。
+MATE_CHIPS = ((-1, "⏸︎", "1;31"), (1, "✔︎", "1;32"), (2, "▶︎", "33"),
+              (3, "✓︎", "34"), (4, "✔︎", "2"))
+
+
+def mate_cell(member, plain=False):
+    """lead 那一行上的队员格：`队员 4 ✔︎3 ✓︎1`，不是 lead 就是空。
+
+    放在年龄列之后、自由文本之前 —— 那里每一行的 x 都一样，所以它读起来是一栏；
+    而它只在有队的那一行才占宽度，别的行一格都不付（列表里绝大多数行没有队）。"""
+    if not member or not member.get("is_lead"):
+        return ""
+    ranks = mate_ranks.get(member["team"]) or []
+    if not ranks:
+        return ""
+    head = f"{agent_teams.MEMBER_LABEL} {len(ranks)}"
+    if not plain:
+        head = f"\033[36m{head}\033[0m"
+    return head + " " + mate_chip_text(member["team"], plain) + "  "
+
+
+def mate_chip_text(team, plain=False):
+    """一个队的队员状态，`✔︎3 ▶︎1 ✓︎1`，没队员就是空。"""
+    ranks = mate_ranks.get(team) or []
+    bits = []
+    for rk, icon, colour in MATE_CHIPS:
+        n = sum(1 for r in ranks if r == rk)
+        if n:
+            bits.append(f"{icon}{n}" if plain else f"\033[{colour}m{icon}{n}\033[0m")
+    return " ".join(bits)
+
+
+
 
 # Collapsing the quiet ones. With a dozen panes the list fits; with 24 it
 # doesn't, and the ones you scroll past are always the same two kinds: READ
@@ -620,54 +667,18 @@ def member_tail(member, counts):
     return " · ".join(bits)
 
 
-# A team is summarised on the header of the session it is running in, not
-# in a block of its own.
-#
-# The block used to sit above the list, and it drew the same thing twice: a
-# team is spawned by splitting the window its lead is already in, so the
-# team and that session are one object, and there is no arrangement in
-# which they are two rows worth looking at. Worse, the block wasn't a
-# destination — it occupied a row that couldn't take you anywhere, while
-# the session header directly below it could. Folding it in costs nothing
-# and removes an entire row kind, along with the cursor, Enter and preview
-# special cases that kind needed.
-#
-# What the block's second line used to say — the members with no pane of
-# their own — moves into the preview, which is the one surface with room
-# to name them. It must not simply vanish: it's the part of a team this
-# list structurally cannot show.
 counts_of = {t["team"]: t["counts"] for t in (teams_snap["teams"] if teams_snap else ())}
 team_by_name = {t["team"]: t for t in (teams_snap["teams"] if teams_snap else ())}
-
-
-def team_summary(team):
-    """The team's own counts, for the tail of its session's header.
-
-    Only the numbers that are about the *team* rather than the panes: the
-    session's own status counts are already there and say how the panes
-    are doing. Zero counts are dropped, the same as those."""
-    t = team_by_name.get(team)
-    if not t:
-        return ""
-    c = t["counts"]
-    n_mate = sum(1 for m in t["members"] if not m["is_lead"])
-    bits = []
-    if n_mate:
-        bits.append(f"{agent_teams.MEMBER_LABEL} {n_mate}")
-    for key, word in (("in_progress", "在做"), ("pending", "待领"),
-                      ("blocked", "挡住")):
-        if c.get(key):
-            bits.append(f"{word} {c[key]}")
-    inbox_total = sum(m["inbox"] for m in t["members"])
-    if inbox_total:
-        bits.append(f"信箱 {inbox_total}")
-    if not bits:
-        return ""
-    return "  \033[36m编队\033[0m \033[2m" + " · ".join(bits) + "\033[0m"
 
 row_num = 0  # global 1-based pane-row counter (the digit-jump number)
 for s in sessions_sorted:
     entries = sorted(by_session[s], key=lambda x: x[0])   # by tmux window.pane
+    # 队员从这里就退出，整条链路都不再碰它们：不出行、不进会话表头那排计数、也不算进
+    # 「⋯ 收起 N 个」。会话表头说的是这个会话里有几个主 Claude 在什么状态；把 lead
+    # 派出去的四五只手混进去，那排数字就不是那个意思了（用户 2026-09-29：
+    # 「只展示 team leader 的或者是原本的 Claude 的状态」）。
+    # 放在编号之前不影响编号：队员本来就不占号（下面 `if not is_mate: row_num += 1`）。
+    entries = [e for e in entries if not (e[7] and e[7].get("is_mate"))]
     # Under `f`, a session with nobody from a team in it disappears whole —
     # header included. Its panes still consume their numbers on the way
     # past, so nothing renumbers when the filter goes on or off.
@@ -699,7 +710,18 @@ for s in sessions_sorted:
     )
     # Which of this session's panes collapsing would actually remove. The
     # caller's own pane never counts — it's never hidden.
-    hideable = [e for e in entries if e[1] in HIDDEN_RANKS and e[2] != caller]
+    # 队员有结果等着看的时候，它们的 lead 不折叠 —— 队员已经不出行了，lead 那一行上的
+    # 队员格是唯一说这件事的地方，把它折进「⋯ 收起 N 个」等于把消息一起收走，而这正好是
+    # 最该看见的时候：lead 自己安静（所以够得着折叠）、手底下的人却刚跑完。
+    # 只认「⏸ 等你确认」和「✔ 跑完没看」两种。队员还在跑（▶）不算 —— 那本来就没你的事，
+    # 为它把一行钉在列表上是噪音。
+    def team_needs_you(e):
+        m = e[7]
+        if not (m and m.get("is_lead")):
+            return False
+        return any(r in (-1, 1) for r in mate_ranks.get(m["team"], ()))
+    hideable = [e for e in entries
+                if e[1] in HIDDEN_RANKS and e[2] != caller and not team_needs_you(e)]
     # Collapsing one row costs one row: the "⋯ 收起 N 个" line replaces it
     # exactly, so hiding a single pane saves nothing and only makes you press
     # `a` to see something that was already on screen. Two is where it starts
@@ -717,8 +739,11 @@ for s in sessions_sorted:
     # coordinate people actually navigate by; a team is something this
     # session *has*, not something it stops being.
     header = (
+        # 编队的事一律挂在 lead 那一行上，不挂会话表头（用户 2026-09-29：
+        # 「不是让你把那个编队的信息显示到 session 上，而是显示到对应的 team leader 上」）。
+        # lead 行已经带着队员格（mate_cell）和在做/待领/挡住（member_tail），表头再说一遍
+        # 是同一句话印两遍。
         "\033[1;36m" + pad(f"▾ {sid_label}{s}", 22) + "\033[0m" + counts
-        + "".join(team_summary(t) for t in sorted(teams_in_session.get(s, ())))
     )
     # 行尾的零宽字符是这一行属于哪一级的暗号，给 picker 的滚轮用：fzf 的 --raw +
     # down-match/up-match 只停在「匹配」的行上，skip-header.sh 用 search() 换成当前这一级
@@ -764,6 +789,13 @@ for s in sessions_sorted:
         if pane in hidden_ids:
             continue
         if team_only and not member:
+            continue
+        # 队员不出行。它们要说的那句话已经压进 lead 那一行的队员格（mate_cell）：
+        # 有几个人、各在什么状态。一个队几个人就是列表里几整行，而那几行的名字、年龄、
+        # cwd 全是重复的 —— 花的是纵向空间，换回来的只有那一句话。
+        # 没有例外，`f` 里也不出 —— 用户 2026-09-29：「第三级也就 team mates
+        # 那一层就不要做了」。picker 只剩两级：session 和 Claude 窗格。
+        if is_mate:
             continue
         # The name column. For a member the name *is* the marker, so it is
         # printed in that member's own colour and at full width — no prefix
@@ -817,7 +849,10 @@ for s in sessions_sorted:
             # same digit is worse than none.
             body = ("✔︎ DONE  "
                     + col(wname, NAME_W - (MATE_INDENT if is_mate else 0))
-                    + col(fmt_age(1, age), AGE_W) + (trailing or tilde(cwd)))
+                    + col(fmt_age(1, age), AGE_W)
+                    # 这一行整条都是暗的，所以队员格也走无色版本，不然它自带的
+                    # \033[0m 会把后面的文字提前从暗色里拉出来。
+                    + mate_cell(member, plain=True) + (trailing or tilde(cwd)))
             display = (f"  \033[2m{'' if is_mate else row_num:>3}  "
                        + (" " * MATE_INDENT if is_mate else "")
                        + body + "\033[0m")
@@ -828,6 +863,9 @@ for s in sessions_sorted:
                 + "  "
                 + name_cell
                 + col(fmt_age(rank, age), AGE_W)
+                # 队员格在 dim 的外面：它自带颜色，包进 \033[2m 里那串 \033[0m
+                # 会把后面的自由文本提前从暗色里拉出来。
+                + mate_cell(member)
                 + "\033[2m" + (trailing or tilde(cwd)) + "\033[0m"
             )
         # Field 4 is what skip-header.sh matches typed digits against, so a
