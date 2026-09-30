@@ -317,20 +317,19 @@ if q:
     parts.append(q)
 if MODE == "quota":
     blocked, done_unread, running, read_count = [], 0, 0, 0
+# ⏸ 是固定的第四块，和另外三块一样宽、一样从不消失（用户 2026-09-29：「wait 的弹出
+# 状态要如何更好地遮挡其他的状态，而不影响其他信息的显示」）。
+# 以前它带着出事那个窗口的**名字**排在最前面，宽度随名字变：一有人等你确认，后面三块
+# 计数和 git/文件/轨迹 三个按钮就整体右移 —— 你按肌肉记忆去点就点错，这正是另外三块
+# 当初改成「零也常驻」要解决的问题；名字长的时候还会把窗口列表往右挤出去。
+# 名字不放这儿：窗口列表本来就按窗口画状态徽标（window-status-format 里的
+# #{E:@claude_win}），哪个窗口在等你，那一格自己是红的，而且旁边就写着窗口名。
+# 仍然可点：有人等的时候范围名带上等最久的那个窗格（w%NN），点它直接跳过去；
+# 归零时不发范围，就是个灰的、点不动的位置占位。
+blocked_range = ""
 if blocked:
-    blocked.sort(reverse=True)          # longest-waiting named first
-    age, name, pane = blocked[0]
-    n = len(blocked)
-    # ⏸ + the window that is waiting (+N if more are), in red text on the
-    # bar's own background — a filled red chip was too loud to live next to
-    # the session name.
-    # Clickable: the range carries the pane it names (`w%38`), so a click
-    # lands on exactly the window shown here — the longest-waiting one —
-    # rather than whatever jump-top would pick on its own.
-    label = clip(name).lstrip("✳ ").strip() + (f" +{n - 1}" if n > 1 else "")
-    parts.append(
-        f"#[range=user|w{pane}]#[fg=#ff5f5f,bold]⏸︎ {label}#[default]#[norange]"
-    )
+    blocked.sort(reverse=True)          # longest-waiting first
+    blocked_range = "w" + blocked[0][2]
 # The three counts, always all three, in the same order, whether or not any
 # of them is zero — 一个数归零就整块消失的话，另外两个会横着挪位置，你按着
 # 记忆去点就点错了（2026-09-28 用户原话：「尽量固定显示，就算是 0 也显示一下，
@@ -347,13 +346,18 @@ if blocked:
 # quota 模式（状态栏最右边那一半）不出这三个：常驻之后零也会画出来，
 # 右边就多了一组全是 0 的 ✔ ▶ ✓。
 ZERO = "#6c6c6c"
-for rng, icon, count, colour in (("done", "✔︎", done_unread, "#5fff00"),
+for rng, icon, count, colour in ((blocked_range, "⏸︎", len(blocked), "#ff5f5f"),
+                                 ("done", "✔︎", done_unread, "#5fff00"),
                                  ("running", "▶︎", running, "#ffff00"),
                                  ("read", "✓︎", read_count, "#5f87d7")):
     if MODE == "quota":
         break
-    parts.append(f"#[range=user|{rng}]#[fg={colour if count else ZERO}]"
-                 f"{icon} {count}#[norange]")
+    # ⏸ 非零时加粗：它是这四块里唯一「要你动手」的那一块，颜色之外再给一档轻重。
+    weight = ",bold" if count and icon == "⏸︎" else ""
+    chip = f"#[fg={colour if count else ZERO}{weight}]{icon} {count}"
+    # 归零的 ⏸ 没有可跳的窗格，所以不发范围 —— 点它什么也不会发生，而不是点到
+    # 一个指向空处的动作。
+    parts.append(f"#[range=user|{rng}]{chip}#[norange]" if rng else chip + "#[default]")
 
 if parts:
     # A trailing plain space in quota mode too, although that half sits at
