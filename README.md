@@ -348,10 +348,11 @@ Clickable words in the picker's header are drawn as grey chips; toggling
 `全部` inside a float reopens it at the new height (tmux only grows a
 floating pane downward).
 
-Each window is two cells. The first is usage: it grows up from the bottom
-(▁ → █, green → red). The second is a cooldown: it fills with blue from the
-top as the reset approaches — all grey, the window just began; all blue,
-it's about to reset. `status-badge.sh states` / `status-badge.sh quota`
+Each window is two cells, drawn the same way so their heights can be
+compared. The first is usage: it grows up from the bottom (▁ → █, green →
+red). The second is how much of the window has elapsed, in blue, growing up
+from the bottom too — ▁ just after it opened, █ about to reset. Usage taller
+than time means you're burning faster than the window refills. `status-badge.sh states` / `status-badge.sh quota`
 print the two halves separately, so the Claude states can sit next to the
 session name on the left and the quota at the far right. Clicking the quota
 opens a card at once with the last reading, its time and a ⟳ refreshing mark;

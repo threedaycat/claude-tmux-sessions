@@ -217,14 +217,15 @@ def maybe_refresh(best):
 
 
 GAUGE = "▁▂▃▄▅▆▇█"
-# Time until the window resets, as a cooldown cell: the part already waited
-# out fills in deep blue from the top, the part still to wait stays grey at
-# the bottom. All grey = the window just began; all blue = it's about to
-# reset. A cooldown, not a quota: the deep colour means "nearly ready", so it
-# reads as progress towards a refill rather than as something being spent.
+# 离重置还有多久，画成和用量柱**同方向**的一根柱子：窗口里**已经过去**的那部分从下往上
+# 长成深蓝，刚开窗是 ▁，快重置时是 █。
+#
+# 两根柱子必须同向、同画法（同一个 level()、都不带背景色），高度才能直接比：
+# 用量柱高过时间柱 = 烧得比「匀速用到重置」快；矮于它 = 还有富余。
+# 2026-09-29 之前这格是反的（灰色的「还要等」从下往上、深蓝从上往下填），
+# 一上一下没法比 —— 用户原话：「我没有办法去比较我的平均用量是否已经超过了限额刷新时间」。
 WINDOW_SECS = {"5h": 5 * 3600, "7d": 7 * 86400}
-TIME_DONE = "#0087d7"       # deep: cooldown already waited out (top)
-TIME_WAIT = "#585858"       # grey: still to wait (bottom)
+TIME_DONE = "#0087d7"       # 深蓝：窗口里已经过去的部分，从下往上长
 
 
 def level(frac, n):
@@ -237,21 +238,19 @@ def time_left_glyph(label, dt):
         return ""
     left = (dt - datetime.now().astimezone()).total_seconds()
     waiting = max(0.0, min(1.0, left / WINDOW_SECS.get(label, 5 * 3600)))
-    k = round(waiting * len(GAUGE))            # eighths still to wait (grey, from the bottom)
-    if k >= len(GAUGE):
-        # Nothing waited out yet: plain grey █ with no background — fonts
-        # often draw █ a little narrower than the cell, and a coloured
-        # background down its edge reads as a second bar.
-        return f"#[fg={TIME_WAIT}]█#[default]"
-    glyph = GAUGE[k - 1] if k else " "
-    return f"#[fg={TIME_WAIT},bg={TIME_DONE}]{glyph}#[default]"
+    elapsed = 1.0 - waiting                    # 窗口已经走过的比例
+    # 和用量柱同一个 level()：两根一样高，就真的是「用掉的比例 = 走过的比例」。
+    # 不带背景色，也和用量柱一致 —— 给一根加底色会让它看上去总是满格，没法比高度。
+    return f"#[fg={TIME_DONE}]{GAUGE[level(elapsed, len(GAUGE))]}#[default]"
 
 
 def window_segment(label, w, with_reset=False):
     """`5h▂▄`: a dim label, a block for how much is used (grows up, ▁ → █,
-    coloured green → red), then a cooldown cell that fills with blue from
-    the top as the reset approaches (see time_left_glyph). No numbers in the
-    bar — a click opens a card with them (usage-refresh.py --notify)."""
+    coloured green → red), then a blue block for how much of the window has
+    elapsed — same direction and same scale, so comparing the two heights
+    tells you whether you're burning faster than the window refills (see
+    time_left_glyph). No numbers in the bar — a click opens a card with them
+    (usage-refresh.py --notify)."""
     pct = (w or {}).get("utilization")
     if pct is None:
         return f"#[fg=#585858]{label}·#[default]"
