@@ -44,6 +44,7 @@ import time
 BIN_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN_DIR)
 import agent_teams                                            # noqa: E402
+import effective_status                                       # noqa: E402
 
 # session-digest.py can't be imported by name (the hyphen isn't a legal
 # module name), and it is worth the four lines: it is where the naming and
@@ -92,11 +93,17 @@ LABEL_W = 8
 
 
 def load_status():
+    """有效状态（主 agent + 它的 subagent，见 effective_status.py），和 picker、
+    状态栏同一个来源。"""
     try:
         with open(STATUS_FILE) as f:
-            return json.load(f)
+            data = json.load(f)
     except Exception:                                          # noqa: BLE001
         return {}
+    try:
+        return effective_status.effective(data)
+    except Exception:                                          # noqa: BLE001
+        return data
 
 
 def live_panes():

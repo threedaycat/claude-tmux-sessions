@@ -294,6 +294,17 @@ def fmt_age(rank, secs):
     return f"{d}前"  # READ — since it last finished something
 
 
+def effective(data):
+    """有效状态（主 agent + 它的 subagent），和 picker 的行、状态栏同一个来源 ——
+    见 effective_status.py。读不到模块就原样返回。"""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+        import effective_status
+        return effective_status.effective(data)
+    except Exception:
+        return data
+
+
 def label_of(entry):
     status = entry.get("status", "running")
     if status == "blocked":
@@ -492,7 +503,7 @@ def team_board(team):
     # that still believes the lead has no pane.
     try:
         with open(STATUS_FILE) as f:
-            data = json.load(f)
+            data = effective(json.load(f))
     except Exception:
         data = {}
 
@@ -583,7 +594,7 @@ def pane_bar(pane):
     not a place anything can be put."""
     try:
         with open(STATUS_FILE) as f:
-            data = json.load(f)
+            data = effective(json.load(f))
     except Exception:
         return
     e = data.get(pane)
@@ -624,7 +635,7 @@ def main():
 
     try:
         with open(STATUS_FILE) as f:
-            data = json.load(f)
+            data = effective(json.load(f))
     except Exception:
         return
 

@@ -21,6 +21,15 @@ Modes:
                     Cheap by design: it only writes when this pane is
                     currently "blocked" — see the function for why that
                     matters on a hook that fires after every tool call.
+  subagent-start / subagent-stop
+                    called by the SubagentStart / SubagentStop hooks. Keep
+                    the pane's set of running subagents (`subagents`:
+                    agent_id -> {type, started_at, seen_at}) so a pane whose
+                    main agent has stopped but still has a (background)
+                    subagent at work shows as running — see
+                    bin/effective_status.py, which is where that's decided.
+                    When the last one stops after the main agent already
+                    has, the pane turns into a fresh unread "done".
   mark-read <pane>  called by claude-tmux-picker.sh right after it jumps to
                     <pane>, so a "done" pane the user has actually visited
                     once shows as already-seen instead of unread.
@@ -78,6 +87,25 @@ SERVER_FILE = os.path.expanduser("~/.claude/tmux-claude-server.json")
 RESTORE_FILE = os.path.expanduser("~/.claude/tmux-claude-restore.json")
 
 RESTORE_TTL = 14 * 24 * 3600  # drop mappings not refreshed in two weeks
+
+# bin/ 下的模块（effective_status、agent_teams）从这里 import。必须 realpath：
+# 钩子是从 ~/.claude/hooks/ 下的软链跑的，abspath 不解软链，算出来是
+# ~/.claude/bin —— 那个目录不存在，import 静默失败。
+BIN_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "bin")
+sys.path.insert(0, BIN_DIR)
+try:
+    import effective_status
+except Exception:
+    effective_status = None    # 读不到就退回原文 —— 状态栏不该因为这个变空
+
+
+def effective(data, now=None):
+    if effective_status is None:
+        return data
+    try:
+        return effective_status.effective(data, now)
+    except Exception:
+        return data
 
 
 def tmux_display(pane):
@@ -408,7 +436,21 @@ def record_status(status, stdin_data):
         "session_id": stdin_data.get("session_id"),
     }
 
-    with_status_file(lambda data: data.__setitem__(pane, entry))
+    def apply(data):
+        # 整条覆盖（顺手清掉 read/archived，见上面 Modes 的说明），只有正在跑的
+        # subagent 要带过去：UserPromptSubmit/Stop 不说明 subagent 停了 —— 前台
+        # subagent 在主 agent 的回合里跑，后台的更是在 Stop 之后还在跑。
+        # 换了会话（session_id 变了）就不带：那是另一个 Claude 的 subagent。
+        old = data.get(pane) or {}
+        subs = old.get("subagents")
+        if subs and (old.get("session_id") == entry["session_id"]
+                     or not old.get("session_id") or not entry["session_id"]):
+            subs = prune_subagents(subs, time.time())
+            if subs:
+                entry["subagents"] = subs
+        data[pane] = entry
+
+    with_status_file(apply)
     # Before the restore bookkeeping and the (slower) blocked notification
     # path: the window list is the thing you're looking at, so it should
     # flip the moment the state does.
@@ -485,16 +527,161 @@ def unblock():
             data = json.load(f)
     except Exception:
         return
-    if (data.get(pane) or {}).get("status") != "blocked":
+    cur = data.get(pane) or {}
+
+    # subagent 心跳：工具调用来自某个在册的 subagent（钩子输入里带 agent_id，只有
+    # subagent 里触发的才带），就顺手把它的 seen_at 往后推，免得一个真在干活的长
+    # subagent 被 SUBAGENT_TTL 当成死了。只有这个窗格有 subagent 在册时才去读 stdin
+    # （PostToolUse 的输入里带着整份工具输出，可能很大）；隔 SUBAGENT_HEARTBEAT 秒
+    # 才写一次盘。没有 subagent 的普通工具调用，代价和以前一样。
+    beat = None
+    if cur.get("subagents"):
+        aid = read_stdin().get("agent_id")
+        rec = (cur.get("subagents") or {}).get(aid) if aid else None
+        if isinstance(rec, dict) and \
+                time.time() - (rec.get("seen_at") or 0) > SUBAGENT_HEARTBEAT:
+            beat = aid
+
+    if cur.get("status") != "blocked" and beat is None:
         return
 
     def apply(data):
+        e = data.get(pane)
+        if not e:
+            return
         # Re-checked under the lock: the read above was unlocked, and Stop
         # may have overwritten the entry in between.
-        e = data.get(pane)
-        if e and e.get("status") == "blocked":
+        if e.get("status") == "blocked":
             e["status"] = "running"
             e["updated_at"] = time.time()
+        rec = (e.get("subagents") or {}).get(beat) if beat else None
+        if isinstance(rec, dict):
+            rec["seen_at"] = time.time()
+
+    with_status_file(apply)
+    if cur.get("status") == "blocked":
+        sync_window_badges()     # 光是心跳的话显示不变，不用刷
+
+
+# Subagents --------------------------------------------------------------------
+#
+# 主 agent Stop 了，后台 subagent 可能还在跑（run_in_background 的 Agent 调用，跑完才有
+# SubagentStop）。以前一 Stop 就显示「完成」，用户看着 ✔ 回去一看，活还没干完。
+# 这里只记账：哪些 subagent 在跑。「所以这个窗格算不算在跑」由 bin/effective_status.py
+# 决定，所有读状态的地方都经过它。
+
+SUBAGENT_TTL = getattr(effective_status, "SUBAGENT_TTL", 3 * 3600)
+
+# subagent 自己的工具调用刷新 seen_at 的最小间隔。PostToolUse 每次工具调用都触发，
+# 每次都写盘就把 unblock 的快路径毁了；TTL 是小时级的，几分钟刷一次绰绰有余。
+SUBAGENT_HEARTBEAT = 300
+
+
+def prune_subagents(subs, now):
+    """去掉过期的 subagent 记录（判据和 effective_status.live_subagents 是同一个）。"""
+    if effective_status is not None:
+        return dict(effective_status.live_subagents({"subagents": subs}, now))
+    return {a: r for a, r in (subs or {}).items() if isinstance(r, dict)
+            and now - (r.get("seen_at") or r.get("started_at") or 0) < SUBAGENT_TTL}
+
+
+def read_stdin():
+    try:
+        return json.load(sys.stdin)
+    except Exception:
+        return {}
+
+
+def new_entry(pane, status, stdin_data):
+    """A fresh entry for a pane we have no record of, same shape record_status
+    writes. None when tmux can't describe the pane."""
+    info = tmux_display(pane)
+    if info is None:
+        return None
+    session_name, window_index, window_name, pane_index, cwd = info
+    return {
+        "pane": pane, "session": session_name, "window": window_index,
+        "window_name": window_name, "pane_index": pane_index, "cwd": cwd,
+        "status": status, "updated_at": time.time(),
+        "session_id": stdin_data.get("session_id"),
+    }
+
+
+def subagent_start():
+    pane = os.environ.get("TMUX_PANE")
+    if not pane:
+        return
+    stdin_data = read_stdin()
+    aid = stdin_data.get("agent_id")
+    if not aid:
+        return
+    # tmux 只在真要新建 entry 时才问 —— 先在锁外问好，锁里不起子进程。
+    fresh = None
+    try:
+        with open(STATUS_FILE) as f:
+            known = pane in json.load(f)
+    except Exception:
+        known = False
+    if not known:
+        # 没有 entry（被 prune 掉了、或者状态文件刚丢过）：subagent 正在起，
+        # 这个会话显然在干活，按 running 建一条。
+        fresh = new_entry(pane, "running", stdin_data)
+
+    def apply(data):
+        now = time.time()
+        e = data.get(pane)
+        if e is None:
+            if fresh is None:
+                return
+            e = data[pane] = dict(fresh)
+        # 被我们自己「发现」的 entry（discover_claude_panes）只是占位，钩子一来就该
+        # 换成真的；这里 subagent 都起了，说明它在跑。
+        if e.get("discovered"):
+            e.pop("discovered", None)
+            e.pop("read", None)
+            e["status"] = "running"
+            e["updated_at"] = now
+        subs = prune_subagents(e.get("subagents") or {}, now)
+        subs[aid] = {"type": stdin_data.get("agent_type") or "",
+                     "started_at": now, "seen_at": now}
+        e["subagents"] = subs
+
+    with_status_file(apply)
+    sync_window_badges()
+
+
+def subagent_stop():
+    pane = os.environ.get("TMUX_PANE")
+    if not pane:
+        return
+    stdin_data = read_stdin()
+    aid = stdin_data.get("agent_id")
+    if not aid:
+        return
+
+    def apply(data):
+        now = time.time()
+        e = data.get(pane)
+        if not e or not isinstance(e.get("subagents"), dict):
+            return
+        subs = prune_subagents(e["subagents"], now)
+        had = subs.pop(aid, None) is not None
+        if subs:
+            e["subagents"] = subs
+        else:
+            e.pop("subagents", None)
+        # 最后一个还算数的 subagent 停了，主 agent 早就停了：这一刻才是这个会话真正
+        # 「跑完」的时候。照 Stop 的那套来 —— 状态 done、清掉 read/archived、时间记成
+        # 现在 —— 于是它是一条新鲜的未读 DONE，而不是两小时前那次 Stop 的旧账
+        # （那个时间早就让它变灰了）。
+        # 只认「刚才还在册」的：已经过期被扔掉的 subagent 迟到的 Stop 不再翻一次，
+        # 过期那一刻它已经显示成完成了，再翻就是第二遍「完成」。
+        # Stop 本身不发通知（只有 blocked 发），所以这里也不发。
+        if had and not subs and e.get("status") in ("done", "input"):
+            e["status"] = "done"
+            e["updated_at"] = now
+            e.pop("read", None)
+            e.pop("archived", None)
 
     with_status_file(apply)
     sync_window_badges()
@@ -794,9 +981,7 @@ def sync_window_badges():
     _teams_home = os.environ.get("CLAUDE_HOME") or os.path.expanduser("~/.claude")
     if os.path.isdir(os.path.join(_teams_home, "teams")):
         try:
-            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                            "..", "bin"))
-            import agent_teams
+            import agent_teams       # BIN_DIR 已在 sys.path 上（见文件头）
             _snap = agent_teams.snapshot()
             if _snap:
                 mate_panes = {m["pane"] for m in _snap["by_pane"].values()
@@ -807,7 +992,8 @@ def sync_window_badges():
     now = time.time()
     counts = {}
     run_panes = {}
-    for pane, entry in data.items():
+    # 画的是有效状态（主 agent + 它的 subagent），和状态栏计数、picker 同一个来源。
+    for pane, entry in effective(data, now).items():
         win = win_of.get(pane)
         if win is None or entry.get("archived") or pane in mate_panes:
             continue
@@ -1026,6 +1212,10 @@ def main():
         record_status(mode, stdin_data)
     elif mode == "notify":
         record_notification()
+    elif mode == "subagent-start":
+        subagent_start()
+    elif mode == "subagent-stop":
+        subagent_stop()
     elif mode == "unblock":
         unblock()
     elif mode == "mark-read" and len(sys.argv) == 3:

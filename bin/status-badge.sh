@@ -112,6 +112,15 @@ if os.environ.get("BIN_DIR") and os.path.isdir(os.path.join(_claude_home, "teams
     except Exception:
         mate_panes = set()
 
+# 数的是有效状态（主 agent + 它的 subagent，见 effective_status.py），和窗口徽标、
+# picker 同一个来源。读不到模块就退回状态文件原文。
+try:
+    sys.path.insert(0, os.environ.get("BIN_DIR") or ".")
+    import effective_status
+    data = effective_status.effective(data)
+except Exception:
+    pass
+
 now = time.time()
 blocked = []            # (elapsed_secs, window_name, pane_id) for blocked-and-unread
 done_unread = running = read_count = 0

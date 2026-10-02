@@ -19,12 +19,21 @@ BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 # a pane whose Claude is long gone.
 python3 "$BIN_DIR/../hooks/tmux_status_update.py" prune 2>/dev/null || true
 
-pane_id=$(python3 - "$STATUS_FILE" <<'PYEOF'
-import json, sys, subprocess
+pane_id=$(BIN_DIR="$BIN_DIR" python3 - "$STATUS_FILE" <<'PYEOF'
+import json, os, sys, subprocess
 
 status_file = sys.argv[1]
 with open(status_file) as f:
     data = json.load(f)
+
+# 按有效状态排（主 agent + 它的 subagent，见 effective_status.py）：主 agent 停了但
+# subagent 还在跑的，是「在跑」不是「完成」，不该被当成一条结果抢先跳过去。
+try:
+    sys.path.insert(0, os.environ.get("BIN_DIR") or ".")
+    import effective_status
+    data = effective_status.effective(data)
+except Exception:
+    pass
 
 try:
     out = subprocess.check_output(["tmux", "list-panes", "-a", "-F", "#{pane_id}"], text=True)

@@ -434,13 +434,24 @@ if teams_snap:
     })
     members_by_pane = teams_snap["by_pane"]
 
+# 行上的标签按有效状态画（主 agent + 它的 subagent，见 effective_status.py），和状态栏
+# 计数、窗口徽标同一个来源 —— 不然状态栏说 ▶ 在跑，这里却是 ✔ DONE。
+eff = data
+if bin_dir:
+    try:
+        sys.path.insert(0, bin_dir)
+        import effective_status
+        eff = effective_status.effective(data, now)
+    except Exception:
+        eff = data
+
 by_session = defaultdict(list)
 # Which teams have a pane in which session. Derived from the panes rather
 # than asked of the roster, because the roster records no session: the only
 # thing tying a team to a place in this list is a member's pane id, so a
 # team is "in" whichever session its members turned up in.
 teams_in_session = defaultdict(set)
-for pane, e in data.items():
+for pane, e in eff.items():
     # `discovered` panes (see discover_claude_panes) used to be skipped here:
     # they were meant only to fill the window-list badges, and would get a row
     # once they ran a hook. That turned out to be exactly wrong after a tmux

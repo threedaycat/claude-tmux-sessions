@@ -36,7 +36,7 @@ import json, os, sys
 
 path = sys.argv[1]
 if os.path.exists(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         settings = json.load(f)
 else:
     settings = {}
@@ -64,9 +64,17 @@ ensure_hook("PostToolUse",
             "python3 ~/.claude/hooks/tmux_status_update.py unblock 2>/dev/null || true")
 ensure_hook("SessionEnd",
             "python3 ~/.claude/hooks/tmux_status_update.py clear 2>/dev/null || true")
+# 主 agent Stop 了，后台 subagent 可能还在跑：记下在跑的 subagent，最后一个停了才算
+# 这个会话跑完（见 hooks/tmux_status_update.py 的 subagent-start / subagent-stop）。
+ensure_hook("SubagentStart",
+            "python3 ~/.claude/hooks/tmux_status_update.py subagent-start 2>/dev/null || true")
+ensure_hook("SubagentStop",
+            "python3 ~/.claude/hooks/tmux_status_update.py subagent-stop 2>/dev/null || true")
 
-with open(path, "w") as f:
-    json.dump(settings, f, indent=2)
+# ensure_ascii=False：settings.json 里常有中文（权限说明、别的钩子的注释），默认的
+# \uXXXX 转义虽然等价，但会把整个文件改得面目全非。
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(settings, f, indent=2, ensure_ascii=False)
     f.write("\n")
 
 print("hooks merged into", path)
