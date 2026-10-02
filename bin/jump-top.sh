@@ -26,20 +26,23 @@ status_file = sys.argv[1]
 with open(status_file) as f:
     data = json.load(f)
 
-# 按有效状态排（主 agent + 它的 subagent，见 effective_status.py）：主 agent 停了但
-# subagent 还在跑的，是「在跑」不是「完成」，不该被当成一条结果抢先跳过去。
+try:
+    out = subprocess.check_output(
+        ["tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{window_id}"], text=True)
+except Exception:
+    out = ""
+win_id_of = dict(line.split("\t", 1) for line in out.splitlines() if "\t" in line)
+live = set(win_id_of)
+
+# 按有效状态排（主 agent + 它的 subagent；领队 + 它的队员，见 effective_status.py）：
+# 主 agent 停了但 subagent 还在跑的，是「在跑」不是「完成」，不该被当成一条结果抢先
+# 跳过去。
 try:
     sys.path.insert(0, os.environ.get("BIN_DIR") or ".")
     import effective_status
-    data = effective_status.effective(data)
+    data = effective_status.effective(data, pane_window=win_id_of)
 except Exception:
     pass
-
-try:
-    out = subprocess.check_output(["tmux", "list-panes", "-a", "-F", "#{pane_id}"], text=True)
-except Exception:
-    out = ""
-live = set(out.split())
 
 import os, time
 # Idle older than this has been abandoned — don't let "jump to what needs
@@ -69,7 +72,8 @@ for pane, e in data.items():
     key = (rank_of(e.get("status", "running"), e.get("read"), age), -e.get("updated_at", 0))
     if best_key is None or key < best_key:
         best_key = key
-        best = pane
+        # 领队借来的 WAIT 跳到那个队员（e["via"]）—— 权限框在它的窗格里。
+        best = e.get("via") or pane
 
 print(best or "")
 PYEOF

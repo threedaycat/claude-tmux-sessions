@@ -53,14 +53,17 @@ except Exception:
 # still shows correctly), same as the picker does.
 try:
     out = subprocess.check_output(
-        ["tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{window_name}"], text=True)
+        ["tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{window_name}\t#{window_id}"],
+        text=True)
 except Exception:
     out = ""
 win_of = {}
+win_id_of = {}          # 给 effective_status 认领队用：窗口 id 是唯一的，窗口名不是
 for line in out.splitlines():
     p = line.split("\t")
-    if len(p) == 2:
+    if len(p) == 3:
         win_of[p[0]] = p[1]
+        win_id_of[p[0]] = p[2]
 live = set(win_of)
 
 
@@ -100,6 +103,7 @@ IDLE_STALE = int(os.environ.get("CLAUDE_TMUX_IDLE_STALE_SECS", "7200"))  # 2h
 # 这个文件对他们一个字节的开销都不加。读不出来就当没有队员，计数退回原样 ——
 # 编队读坏了不该让状态栏变空。
 mate_panes = set()
+_snap = None
 _claude_home = os.environ.get("CLAUDE_HOME") or os.path.expanduser("~/.claude")
 if os.environ.get("BIN_DIR") and os.path.isdir(os.path.join(_claude_home, "teams")):
     try:
@@ -110,14 +114,15 @@ if os.environ.get("BIN_DIR") and os.path.isdir(os.path.join(_claude_home, "teams
             mate_panes = {m["pane"] for m in _snap["by_pane"].values()
                           if m.get("is_mate") and m.get("pane")}
     except Exception:
-        mate_panes = set()
+        mate_panes, _snap = set(), None
 
-# 数的是有效状态（主 agent + 它的 subagent，见 effective_status.py），和窗口徽标、
-# picker 同一个来源。读不到模块就退回状态文件原文。
+# 数的是有效状态（主 agent + 它的 subagent；领队 + 它的队员，见 effective_status.py），
+# 和窗口徽标、picker 同一个来源。队员不进计数，但队员在跑/在等时领队替它算一份。
+# 读不到模块就退回状态文件原文。
 try:
     sys.path.insert(0, os.environ.get("BIN_DIR") or ".")
     import effective_status
-    data = effective_status.effective(data)
+    data = effective_status.effective(data, snap=_snap, pane_window=win_id_of)
 except Exception:
     pass
 
@@ -134,7 +139,9 @@ for pane, e in data.items():
     # already-visited one shouldn't keep sounding the banner. A fresh
     # permission prompt overwrites the entry and clears read, re-alerting.
     if status == "blocked" and not e.get("read"):
-        blocked.append((age, win_of.get(pane) or e.get("window_name") or pane, pane))
+        # 跳的是真正在等你的那个窗格：领队的 WAIT 可能是借某个队员的（e["via"]）。
+        blocked.append((age, win_of.get(pane) or e.get("window_name") or pane,
+                        e.get("via") or pane))
     elif status in ("done", "input") and e.get("read"):
         read_count += 1                 # already seen — quiet, but you do go back to these
     elif status in ("done", "input"):

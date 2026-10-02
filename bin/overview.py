@@ -92,16 +92,18 @@ WHERE_W = 14
 LABEL_W = 8
 
 
-def load_status():
-    """有效状态（主 agent + 它的 subagent，见 effective_status.py），和 picker、
-    状态栏同一个来源。"""
+def load_status(snap=None, live=None):
+    """有效状态（主 agent + 它的 subagent；领队 + 它的队员，见
+    effective_status.py），和 picker、状态栏同一个来源。"""
     try:
         with open(STATUS_FILE) as f:
             data = json.load(f)
     except Exception:                                          # noqa: BLE001
         return {}
     try:
-        return effective_status.effective(data)
+        return effective_status.effective(
+            data, snap=snap,
+            pane_window={p: f"{v[0]}:{v[1]}" for p, v in (live or {}).items()} or None)
     except Exception:                                          # noqa: BLE001
         return data
 
@@ -147,9 +149,9 @@ def collect():
     """Every tracked, live, unarchived pane, grouped into session cards.
     Panes that are gone or archived are dropped rather than counted: the
     question on this screen is what is in front of you *now*."""
-    data = load_status()
     live = live_panes()
     snap = agent_teams.snapshot()
+    data = load_status(snap, live)
     now = time.time()
 
     rows, by_pane = [], {}

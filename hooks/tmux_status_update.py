@@ -99,11 +99,11 @@ except Exception:
     effective_status = None    # 读不到就退回原文 —— 状态栏不该因为这个变空
 
 
-def effective(data, now=None):
+def effective(data, now=None, **kw):
     if effective_status is None:
         return data
     try:
-        return effective_status.effective(data, now)
+        return effective_status.effective(data, now, **kw)
     except Exception:
         return data
 
@@ -978,6 +978,7 @@ def sync_window_badges():
     # 和别处一样的门槛：没开过 Agent Teams 的人不会 import，也不会多读一个文件；
     # 读坏了就当没有队员，徽标退回原来的算法。
     mate_panes = set()
+    _snap = None
     _teams_home = os.environ.get("CLAUDE_HOME") or os.path.expanduser("~/.claude")
     if os.path.isdir(os.path.join(_teams_home, "teams")):
         try:
@@ -987,13 +988,14 @@ def sync_window_badges():
                 mate_panes = {m["pane"] for m in _snap["by_pane"].values()
                               if m.get("is_mate") and m.get("pane")}
         except Exception:
-            mate_panes = set()
+            mate_panes, _snap = set(), None
 
     now = time.time()
     counts = {}
     run_panes = {}
-    # 画的是有效状态（主 agent + 它的 subagent），和状态栏计数、picker 同一个来源。
-    for pane, entry in effective(data, now).items():
+    # 画的是有效状态（主 agent + 它的 subagent；领队 + 它的队员），和状态栏计数、
+    # picker 同一个来源。队员不单独画，但它在跑/在等时，领队那一格替它说。
+    for pane, entry in effective(data, now, snap=_snap, pane_window=win_of).items():
         win = win_of.get(pane)
         if win is None or entry.get("archived") or pane in mate_panes:
             continue

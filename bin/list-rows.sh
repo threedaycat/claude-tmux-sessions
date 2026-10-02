@@ -434,14 +434,19 @@ if teams_snap:
     })
     members_by_pane = teams_snap["by_pane"]
 
-# 行上的标签按有效状态画（主 agent + 它的 subagent，见 effective_status.py），和状态栏
-# 计数、窗口徽标同一个来源 —— 不然状态栏说 ▶ 在跑，这里却是 ✔ DONE。
+# 行上的标签按有效状态画（主 agent + 它的 subagent；领队 + 它的队员，见
+# effective_status.py），和状态栏计数、窗口徽标同一个来源 —— 不然状态栏说 ▶ 在跑，
+# 这里却是 ✔ DONE。领队那一行因此是整个队里最忙的那个状态；每个队员自己的状态
+# 仍在它后面的队员格里（mate_cell），那一格读的是队员自己的 entry。
+# 给的窗口映射和上面 attach_lead 的同一份，两边认出的领队才一样。
 eff = data
 if bin_dir:
     try:
         sys.path.insert(0, bin_dir)
         import effective_status
-        eff = effective_status.effective(data, now)
+        eff = effective_status.effective(
+            data, now, snap=teams_snap,
+            pane_window={p: f"{live[p][1]}:{live[p][2]}" for p in data if p in live})
     except Exception:
         eff = data
 
